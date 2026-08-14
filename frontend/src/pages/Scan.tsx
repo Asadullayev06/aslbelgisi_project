@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  ArrowLeft, Undo2, Trash2, PackageMinus, Package, Send, CheckCircle2, AlertTriangle,
+  ArrowLeft, Undo2, PackageMinus, Package, Send, CheckCircle2, AlertTriangle,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHead } from "@/components/ui/Card";
