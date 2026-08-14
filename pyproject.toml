@@ -1,0 +1,12 @@
+[project]
+name = "mass-aggregation-v2"
+version = "0.1.0"
+description = "Multi-user Mass Aggregation for ASL Belgisi — FastAPI + React (single-user v1)."
+requires-python = ">=3.11"
+
+[tool.setuptools.packages.find]
+include = ["backend*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

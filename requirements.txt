@@ -1,0 +1,14 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+sqlalchemy>=2.0.30
+psycopg[binary,pool]>=3.1.18
+alembic>=1.13
+pydantic>=2.7
+pydantic-settings>=2.2
+python-dotenv>=1.0
+python-multipart>=0.0.9
+requests>=2.31
+pandas>=2.0
+openpyxl>=3.1
+bcrypt>=4.1
+PyJWT>=2.8
