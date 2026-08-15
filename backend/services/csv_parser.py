@@ -20,7 +20,6 @@ def normalize_code(code: str) -> str:
     return (
         code.strip()
         .strip('"')
-        .strip("'")
         .replace("\\u001d", "\x1d")
         .replace("\\x1d", "\x1d")
     )

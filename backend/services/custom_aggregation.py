@@ -27,7 +27,7 @@ from typing import Iterable
 import requests
 
 from ..config import get_settings
-from .csv_parser import chunk_codes, to_aggregation_code
+from .csv_parser import chunk_codes
 from .sscc_generator import SSCCGenerator
 
 # Same caps used everywhere else — from ASL Open API v1.35 §1.4.
@@ -147,9 +147,7 @@ def _build_body(units: list[dict], business_place_id: str,
         "aggregationUnits": [{
             "aggregationItemsCount": len(u["codes"]),
             "aggregationUnitCapacity": int(u["capacity"]),
-            # Enforce identity form on every code (KMs from CSV may still
-            # have crypto tails despite our upstream parser handling it).
-            "codes": [to_aggregation_code(c) for c in u["codes"]],
+            "codes": list(u["codes"]),
             "unitSerialNumber": u["sscc"],
         } for u in units],
         "businessPlaceId": bp_val,
