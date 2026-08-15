@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .api import auth as auth_api
-from .api import projects, scanning, submissions
+from .api import gtin_stock, projects, scanning, submissions
 
 app = FastAPI(title="Mass Aggregation v2",
               docs_url="/api/docs", openapi_url="/api/openapi.json")
@@ -34,6 +34,7 @@ app.include_router(auth_api.router)
 app.include_router(projects.router)
 app.include_router(scanning.router)
 app.include_router(submissions.router)
+app.include_router(gtin_stock.router)
 
 
 @app.get("/health")

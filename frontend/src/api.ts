@@ -1,5 +1,6 @@
 import type {
   ProjectSummary, ScanResponse, ScanState, SubmitResponse, ValidateResult,
+  StockRegisterResp, StockStatusResp, StockResultResp, StockVerifyResp,
 } from "./types";
 
 // Called when any request comes back 401 so the shell can bounce to login.
@@ -76,4 +77,23 @@ export const api = {
   submit: (projectId: number, api_key?: string) =>
     req<SubmitResponse>(`/api/projects/${projectId}/submit`,
                         { method: "POST", body: JSON.stringify({ api_key: api_key || null }) }),
+
+  // GTIN stock (Ostatok)
+  stockVerify: (inn: string, api_key: string) =>
+    req<StockVerifyResp>("/api/gtin-stock/verify",
+      { method: "POST", body: JSON.stringify({ inn, api_key }) }),
+  stockRegister: (body: {
+    inn: string; api_key: string; gtin: string;
+    package_types: string[]; statuses: string[];
+    emission_types: string[]; release_methods: string[];
+    product_series: string;
+  }) =>
+    req<StockRegisterResp>("/api/gtin-stock/register",
+      { method: "POST", body: JSON.stringify(body) }),
+  stockStatus: (export_id: string, api_key: string) =>
+    req<StockStatusResp>(
+      `/api/gtin-stock/exports/${export_id}/status?api_key=${encodeURIComponent(api_key)}`),
+  stockResult: (export_id: string, api_key: string, product_series: string) =>
+    req<StockResultResp>(`/api/gtin-stock/exports/${export_id}/result`,
+      { method: "POST", body: JSON.stringify({ api_key, product_series }) }),
 };
