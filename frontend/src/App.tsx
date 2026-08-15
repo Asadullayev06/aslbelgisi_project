@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Boxes, Plus, LogOut, Shield, HardHat, ScanBarcode, Package, ArrowRight } from "lucide-react";
+import { Boxes, Plus, LogOut, Shield, HardHat, ScanBarcode, Package, ArrowRight, ScanLine } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHead } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
@@ -7,6 +7,7 @@ import { Setup } from "@/pages/Setup";
 import { Scan } from "@/pages/Scan";
 import { Login } from "@/pages/Login";
 import { GtinStock } from "@/pages/GtinStock";
+import { Inspector } from "@/pages/Inspector";
 import { api, setUnauthorizedHandler } from "@/api";
 import { AuthContext, isAdmin, useAuth, type User } from "@/auth";
 import type { ProjectSummary } from "@/types";
@@ -16,7 +17,8 @@ type Route =
   | { kind: "picker" }
   | { kind: "setup" }
   | { kind: "scan"; projectId: number }
-  | { kind: "stock" };
+  | { kind: "stock" }
+  | { kind: "inspector" };
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -81,19 +83,24 @@ function Shell({ route, setRoute }: {
   if (route.kind === "stock") {
     return <GtinStock onExit={() => setRoute({ kind: "home" })} />;
   }
+  if (route.kind === "inspector") {
+    return <Inspector onExit={() => setRoute({ kind: "home" })} />;
+  }
   if (route.kind === "picker") {
     return <Picker onOpen={id => setRoute({ kind: "scan", projectId: id })}
                    onNew={() => setRoute({ kind: "setup" })}
                    onHome={() => setRoute({ kind: "home" })} />;
   }
   return <Home onAggregation={() => setRoute({ kind: "picker" })}
-               onStock={() => setRoute({ kind: "stock" })} />;
+               onStock={() => setRoute({ kind: "stock" })}
+               onInspector={() => setRoute({ kind: "inspector" })} />;
 }
 
 
-function Home({ onAggregation, onStock }: {
+function Home({ onAggregation, onStock, onInspector }: {
   onAggregation: () => void;
   onStock: () => void;
+  onInspector: () => void;
 }) {
   return (
     <div className="mx-auto max-w-6xl px-6 py-10">
@@ -103,7 +110,7 @@ function Home({ onAggregation, onStock }: {
         <div className="text-muted text-sm mt-1">Vositalar</div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         <ToolCard
           icon={<Package className="size-8 text-accent" />}
           title="Agregatsiya"
@@ -115,6 +122,12 @@ function Home({ onAggregation, onStock }: {
           title="GTIN Ostatok"
           subtitle="GTIN bo'yicha real vaqtdagi kompaniya qoldiqlarini ko'rish"
           onClick={onStock}
+        />
+        <ToolCard
+          icon={<ScanLine className="size-8 text-accent" />}
+          title="Marka Kod Tekshiruvi"
+          subtitle="Bitta yoki bir nechta KM kod bo'yicha batafsil ma'lumot"
+          onClick={onInspector}
         />
       </div>
     </div>

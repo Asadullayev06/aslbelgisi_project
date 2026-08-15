@@ -1,6 +1,7 @@
 import type {
   ProjectSummary, ScanResponse, ScanState, SubmitResponse, ValidateResult,
   StockRegisterResp, StockStatusResp, StockResultResp, StockVerifyResp,
+  InspectorLookupResp,
 } from "./types";
 
 // Called when any request comes back 401 so the shell can bounce to login.
@@ -96,4 +97,9 @@ export const api = {
   stockResult: (export_id: string, api_key: string, product_series: string) =>
     req<StockResultResp>(`/api/gtin-stock/exports/${export_id}/result`,
       { method: "POST", body: JSON.stringify({ api_key, product_series }) }),
+
+  // Inspector
+  inspectorLookup: (inn: string, api_key: string, codes: string[]) =>
+    req<InspectorLookupResp>("/api/inspector/lookup",
+      { method: "POST", body: JSON.stringify({ inn, api_key, codes }) }),
 };

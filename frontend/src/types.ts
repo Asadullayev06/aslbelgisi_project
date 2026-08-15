@@ -121,3 +121,56 @@ export interface StockResultResp {
   zip_b64: string; zip_filename: string; fetched_at: string; error: string;
 }
 export interface StockVerifyResp { ok: boolean; inn: string; error?: string | null; detail?: any; }
+
+// Marking-code inspector
+export interface InspectorBasic {
+  code: string; status: string; status_label: string;
+  gtin: string; product_name: string;
+  product_group: string; product_group_name: string;
+  tnved_code: string; tnved_name: string;
+  serial_number: string; batch: string;
+  production_date: string; expiration_date: string;
+  mrp: string; package_type: string;
+}
+export interface InspectorOwner {
+  owner_inn: string; owner_name: string; owner_address: string;
+  emitter_inn: string; emitter_name: string; emitter_address: string;
+  manufacturer_inn: string; manufacturer_name: string; manufacturer_country: string;
+  importer_inn: string; importer_name: string;
+}
+export interface InspectorAggregation {
+  parent_code: string; parent_type: string;
+  child_codes: any[];
+  aggregation_date: string; aggregation_document_id: string;
+  hierarchy_level: string; is_aggregated: boolean;
+}
+export interface InspectorDocument {
+  document_id: string; document_type: string; document_status: string;
+  document_date: string;
+  sender_inn: string; sender_name: string;
+  receiver_inn: string; receiver_name: string;
+  description: string;
+}
+export interface InspectorCustoms {
+  aic_code: string; customs_declaration: string; customs_date: string;
+  country_of_origin: string; customs_status: string;
+}
+export interface InspectorResult {
+  success: boolean; error: string; http_status: number; is_html: boolean;
+  basic: InspectorBasic;
+  owner: InspectorOwner;
+  aggregation: InspectorAggregation;
+  documents: InspectorDocument[];
+  customs: InspectorCustoms;
+  raw_response: any;
+  emission_date: string;
+  summary_owner: string;
+  summary_product: string;
+}
+export interface InspectorLookupResp {
+  ok: boolean;
+  total: number;
+  successful: number;
+  failed: number;
+  results: InspectorResult[];
+}
