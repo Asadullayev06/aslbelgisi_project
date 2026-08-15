@@ -41,7 +41,11 @@ def canonical_km(code: str) -> str:
     crypto signature (total ~83 chars). Identity is only `01 + GTIN(14) + 21 +
     serial(13)`. Everything after is verification, not identity.
     """
-    s = unescape_xml_controls(code.strip().strip('"').strip("'"))
+    # NOTE: do NOT `.strip("'")` — apostrophe is a legitimate serial character
+    # in Uzbek pharma KMs (appears at position 31 for many codes). Stripping
+    # it truncates the identity by one character and ASL returns
+    # `code-not-found`. Same bug that hit csv_parser.py; keep both in sync.
+    s = unescape_xml_controls(code.strip().strip('"'))
     if not s:
         return ""
     if s.startswith("01") and len(s) >= KM_IDENTIFIER_LEN:
@@ -98,7 +102,8 @@ def parse_box_pool_text(text: str) -> tuple[list[str], list[str]]:
     """SSCC text → (normalized codes, warnings). Deduped."""
     warnings, valid, seen = [], [], set()
     for raw in text.splitlines():
-        c = unescape_xml_controls(raw.strip().strip('"').strip("'"))
+        # apostrophe strip removed for consistency with canonical_km — see note there
+        c = unescape_xml_controls(raw.strip().strip('"'))
         if not c:
             continue
         try:
