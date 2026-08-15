@@ -174,3 +174,44 @@ export interface InspectorLookupResp {
   failed: number;
   results: InspectorResult[];
 }
+
+// Custom aggregation
+export interface KmParseResp { codes: string[]; invalid: any[][]; warnings: string[]; total_raw: number; }
+export interface SsccParseResp { codes: string[]; total: number; }
+export interface ModItem { id: string; name: string; raw?: any; }
+export interface ModListResp { ok: boolean; mods: ModItem[]; error: string; }
+
+export interface CustomAggGroup { index: number; sscc: string; codes_count: number; }
+export interface CustomAggReport {
+  report_index: number;
+  unit_count: number;
+  code_count: number;
+  sscc_list: string[];
+  group_indices: number[];
+  ok: boolean;
+  http_status: number;
+  document_id: string;
+  error: string;
+}
+export interface CustomAggRunResp {
+  ok: boolean;
+  mode: "dry_run" | "submit";
+  errors: string[];
+  groups: CustomAggGroup[];
+  reports: CustomAggReport[];
+  total_reports: number;
+}
+export interface CustomAggRunBody {
+  api_key?: string;
+  codes: string[];
+  group_size: number;
+  business_place_id?: string;
+  production_order_id?: string;
+  sscc_source: "auto" | "upload";
+  sscc_inn?: string;
+  sscc_use_gcp?: boolean;
+  sscc_gcp_prefix?: string;
+  sscc_start?: number;
+  sscc_uploaded?: string[];
+  mode: "dry_run" | "submit";
+}

@@ -2,6 +2,7 @@ import type {
   ProjectSummary, ScanResponse, ScanState, SubmitResponse, ValidateResult,
   StockRegisterResp, StockStatusResp, StockResultResp, StockVerifyResp,
   InspectorLookupResp,
+  KmParseResp, SsccParseResp, ModListResp, CustomAggRunResp, CustomAggRunBody,
 } from "./types";
 
 // Called when any request comes back 401 so the shell can bounce to login.
@@ -102,4 +103,26 @@ export const api = {
   inspectorLookup: (inn: string, api_key: string, codes: string[]) =>
     req<InspectorLookupResp>("/api/inspector/lookup",
       { method: "POST", body: JSON.stringify({ inn, api_key, codes }) }),
+
+  // Custom aggregation
+  customParseKm: async (file: File, validate_medicine: boolean) => {
+    const fd = new FormData(); fd.append("file", file);
+    const r = await fetch(`/api/custom-agg/parse-km?validate_medicine=${validate_medicine}`,
+      { method: "POST", body: fd, credentials: "include" });
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    return (await r.json()) as KmParseResp;
+  },
+  customParseSscc: async (file: File) => {
+    const fd = new FormData(); fd.append("file", file);
+    const r = await fetch("/api/custom-agg/parse-sscc",
+      { method: "POST", body: fd, credentials: "include" });
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    return (await r.json()) as SsccParseResp;
+  },
+  customModList: (inn: string, api_key: string) =>
+    req<ModListResp>("/api/custom-agg/mod-list",
+      { method: "POST", body: JSON.stringify({ inn, api_key }) }),
+  customRun: (body: CustomAggRunBody) =>
+    req<CustomAggRunResp>("/api/custom-agg/run",
+      { method: "POST", body: JSON.stringify(body) }),
 };

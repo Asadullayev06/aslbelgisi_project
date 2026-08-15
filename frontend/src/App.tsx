@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Boxes, Plus, LogOut, Shield, HardHat, ScanBarcode, Package, ArrowRight, ScanLine } from "lucide-react";
+import { Boxes, Plus, LogOut, Shield, HardHat, ScanBarcode, Package, ArrowRight, ScanLine, Layers } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHead } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
@@ -8,6 +8,7 @@ import { Scan } from "@/pages/Scan";
 import { Login } from "@/pages/Login";
 import { GtinStock } from "@/pages/GtinStock";
 import { Inspector } from "@/pages/Inspector";
+import { CustomAggregation } from "@/pages/CustomAggregation";
 import { api, setUnauthorizedHandler } from "@/api";
 import { AuthContext, isAdmin, useAuth, type User } from "@/auth";
 import type { ProjectSummary } from "@/types";
@@ -18,7 +19,8 @@ type Route =
   | { kind: "setup" }
   | { kind: "scan"; projectId: number }
   | { kind: "stock" }
-  | { kind: "inspector" };
+  | { kind: "inspector" }
+  | { kind: "custom" };
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -86,6 +88,9 @@ function Shell({ route, setRoute }: {
   if (route.kind === "inspector") {
     return <Inspector onExit={() => setRoute({ kind: "home" })} />;
   }
+  if (route.kind === "custom") {
+    return <CustomAggregation onExit={() => setRoute({ kind: "home" })} />;
+  }
   if (route.kind === "picker") {
     return <Picker onOpen={id => setRoute({ kind: "scan", projectId: id })}
                    onNew={() => setRoute({ kind: "setup" })}
@@ -93,14 +98,16 @@ function Shell({ route, setRoute }: {
   }
   return <Home onAggregation={() => setRoute({ kind: "picker" })}
                onStock={() => setRoute({ kind: "stock" })}
-               onInspector={() => setRoute({ kind: "inspector" })} />;
+               onInspector={() => setRoute({ kind: "inspector" })}
+               onCustom={() => setRoute({ kind: "custom" })} />;
 }
 
 
-function Home({ onAggregation, onStock, onInspector }: {
+function Home({ onAggregation, onStock, onInspector, onCustom }: {
   onAggregation: () => void;
   onStock: () => void;
   onInspector: () => void;
+  onCustom: () => void;
 }) {
   return (
     <div className="mx-auto max-w-6xl px-6 py-10">
@@ -128,6 +135,12 @@ function Home({ onAggregation, onStock, onInspector }: {
           title="Marka Kod Tekshiruvi"
           subtitle="Bitta yoki bir nechta KM kod bo'yicha batafsil ma'lumot"
           onClick={onInspector}
+        />
+        <ToolCard
+          icon={<Layers className="size-8 text-accent" />}
+          title="Custom Aggregation"
+          subtitle="CSV yuklab, guruhlarga bo'lib, bir bosishda ASL ga yuborish"
+          onClick={onCustom}
         />
       </div>
     </div>

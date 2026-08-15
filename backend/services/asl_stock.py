@@ -101,6 +101,40 @@ def verify_api_key_ownership(inn: str, api_key: str) -> dict:
         return {"success": False, "error": f"tarmoq xatosi: {e}", "http_status": 0}
 
 
+def fetch_mod_list(inn: str, api_key: str) -> dict:
+    """GET /participants/mod — business places (MOD list) for this INN.
+
+    Uses the /api/v2 base (not the /public/api/v1 open-API). Both are served
+    by aslbelgisi.uz; the MOD list historically lives on v2. Falls back to
+    xtrace.* if the v2 base doesn't answer.
+    """
+    urls = [
+        "https://aslbelgisi.uz/api/v2/participants/mod",
+        f"{_base()}/api/v2/participants/mod",
+    ]
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Accept": "application/json",
+        "X-INN": inn.strip(),
+    }
+    last: dict = {"success": False, "error": "MOD list request failed", "http_status": 0}
+    for url in urls:
+        try:
+            resp = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+            if resp.status_code in (200, 201):
+                try:
+                    data = resp.json()
+                except Exception:
+                    data = {"raw": resp.text[:500]}
+                return {"success": True, "data": data, "http_status": resp.status_code}
+            last = {"success": False,
+                    "error": f"HTTP {resp.status_code}: {resp.text[:300]}",
+                    "http_status": resp.status_code}
+        except requests.RequestException as e:
+            last = {"success": False, "error": str(e), "http_status": 0}
+    return last
+
+
 def register_export(api_key: str, export_filter: dict) -> dict:
     """POST /public/api/cod/exports — returns {id: ...}"""
     try:
