@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import {
   ArrowLeft, Key, Building2, CheckCircle2, XCircle, Loader2, Upload,
   Sparkles, Layers, FlaskConical, Send, Download, RefreshCw,
-  ChevronRight,
+  ChevronRight, AlertTriangle,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHead } from "@/components/ui/Card";
@@ -12,7 +12,7 @@ import { Toaster, useFlashes } from "@/components/ui/Toast";
 import { api } from "@/api";
 import { useAuth, isAdmin } from "@/auth";
 import type {
-  CustomAggRunResp, ModItem, KmParseResp, CustomAggReport,
+  CustomAggRunResp, ModItem, KmParseResp, SsccParseResp, CustomAggReport,
 } from "@/types";
 import { cn } from "@/lib/utils";
 
@@ -48,7 +48,7 @@ export function CustomAggregation({ onExit }: { onExit: () => void }) {
   const [gcpPrefix, setGcpPrefix] = useState("");
   const [ssccStart, setSsccStart] = useState(1);
 
-  const [ssccUploaded, setSsccUploaded] = useState<string[]>([]);
+  const [ssccResult, setSsccResult] = useState<SsccParseResp | null>(null);
   const [ssccUploading, setSsccUploading] = useState(false);
   const ssccFileRef = useRef<HTMLInputElement>(null);
 
@@ -58,10 +58,16 @@ export function CustomAggregation({ onExit }: { onExit: () => void }) {
   const { flashes, push, dismiss } = useFlashes();
 
   // Derived
-  const kmCount    = kmResult?.codes.length ?? 0;
-  const groups     = kmCount && groupSize > 0 ? Math.ceil(kmCount / groupSize) : 0;
-  const canDryRun  = !!kmCount && groupSize > 0 &&
-                     (ssccMode === "auto" || ssccUploaded.length >= groups);
+  const kmCount     = kmResult?.codes.length ?? 0;
+  const ssccCount   = ssccResult?.codes.length ?? 0;
+  const groups      = kmCount && groupSize > 0 ? Math.ceil(kmCount / groupSize) : 0;
+
+  const kmInvalidN   = kmResult?.invalid.length   ?? 0;
+  const ssccInvalidN = ssccMode === "upload" ? (ssccResult?.invalid.length ?? 0) : 0;
+  const anyInvalid   = kmInvalidN > 0 || ssccInvalidN > 0;
+  const enoughSscc   = ssccMode === "auto" || ssccCount >= groups;
+
+  const canDryRun  = !!kmCount && groupSize > 0 && enoughSscc && !anyInvalid;
   const canSubmit  = canDryRun && !!verified && !!modId.trim() && admin;
 
   // ── auth ──────────────────────────────────────────────
@@ -118,8 +124,14 @@ export function CustomAggregation({ onExit }: { onExit: () => void }) {
     setSsccUploading(true);
     try {
       const r = await api.customParseSscc(file);
-      setSsccUploaded(r.codes);
-      push("hit", `${r.codes.length} ta yaroqli SSCC yuklandi`);
+      setSsccResult(r);
+      if (r.codes.length === 0) {
+        push("err", "Hech qanday yaroqli SSCC topilmadi");
+      } else if (r.invalid.length > 0) {
+        push("warn", `${r.codes.length} ta yaroqli SSCC, ${r.invalid.length} ta noto'g'ri — quyida ko'ring`);
+      } else {
+        push("hit", `${r.codes.length} ta yaroqli SSCC yuklandi`);
+      }
     } catch (e: any) { push("err", String(e.message || e)); }
     setSsccUploading(false);
   }
@@ -149,7 +161,7 @@ export function CustomAggregation({ onExit }: { onExit: () => void }) {
         sscc_use_gcp: useGcp,
         sscc_gcp_prefix: gcpPrefix.trim(),
         sscc_start: ssccStart,
-        sscc_uploaded: ssccMode === "upload" ? ssccUploaded : [],
+        sscc_uploaded: ssccMode === "upload" ? (ssccResult?.codes ?? []) : [],
         mode,
       });
       setRunResult(r);
@@ -205,7 +217,7 @@ export function CustomAggregation({ onExit }: { onExit: () => void }) {
           { n: 1, label: "Autentifikatsiya", done: !!verified },
           { n: 2, label: "MOD",              done: !!modId.trim() },
           { n: 3, label: "KM ro'yxati",      done: kmCount > 0 },
-          { n: 4, label: "SSCC",             done: ssccMode === "auto" || ssccUploaded.length >= groups },
+          { n: 4, label: "SSCC",             done: ssccMode === "auto" || ssccCount >= groups },
           { n: 5, label: "Yuborish",         done: !!runResult && runResult.mode === "submit" && runResult.ok },
         ]}
       />
@@ -421,12 +433,36 @@ export function CustomAggregation({ onExit }: { onExit: () => void }) {
                     onFile={uploadSscc}
                     hint="CSV/TXT — har qatorga bitta SSCC-18"
                   />
-                  {ssccUploaded.length > 0 && (
-                    <div className="mt-2 text-sm">
-                      <StatRow k="Yuklangan SSCC" v={ssccUploaded.length.toLocaleString()} accent />
-                      {ssccUploaded.length < groups && (
+                  {ssccResult && (
+                    <div className="mt-3 space-y-1 text-sm">
+                      <StatRow k="Yaroqli SSCC (yagona)" v={ssccCount.toLocaleString()} accent />
+                      <StatRow k="Noto'g'ri" v={(ssccResult.invalid.length).toLocaleString()}
+                               tone={ssccResult.invalid.length ? "danger" : undefined} />
+                      {ssccResult.warnings.length > 0 && (
+                        <div className="rounded border border-warning/40 bg-warning/10 p-2 text-warning text-xs mt-2">
+                          {ssccResult.warnings.join(" · ")}
+                        </div>
+                      )}
+                      {ssccResult.invalid.length > 0 && (
+                        <details className="text-xs mt-1" open>
+                          <summary className="cursor-pointer text-danger">
+                            Noto'g'ri / takroriy SSCC ({ssccResult.invalid.length})
+                          </summary>
+                          <div className="mt-1 max-h-60 overflow-auto font-mono border border-danger/40 rounded bg-danger/5 p-2">
+                            {ssccResult.invalid.slice(0, 100).map((row: any, i: number) => (
+                              <div key={i} className="text-danger py-0.5">
+                                qator {String(row[0])}: <b>{String(row[1])}</b> — {String(row[2])}
+                              </div>
+                            ))}
+                            {ssccResult.invalid.length > 100 && (
+                              <div className="text-muted mt-1">…yana {ssccResult.invalid.length - 100} ta</div>
+                            )}
+                          </div>
+                        </details>
+                      )}
+                      {ssccCount > 0 && ssccCount < groups && (
                         <div className="text-danger text-xs mt-1">
-                          Yetarli emas: {groups} kerak, {ssccUploaded.length} bor.
+                          Yetarli emas: {groups} kerak, {ssccCount} bor.
                         </div>
                       )}
                     </div>
@@ -448,21 +484,40 @@ export function CustomAggregation({ onExit }: { onExit: () => void }) {
               Dry-run har kim uchun ochiq — u lokal validatsiya qiladi va SSCC ni preview qiladi.
               Submit ASL Belgisi ga yuboradi (faqat admin).
             </div>
+
+            {anyInvalid && (
+              <div className="mb-3 rounded-lg border border-danger/50 bg-danger/10 p-3 text-sm text-danger flex items-start gap-2">
+                <AlertTriangle className="size-4 mt-0.5 shrink-0" />
+                <div>
+                  <b>Noto'g'ri kodlar bor — avval to'g'irlang.</b>
+                  <ul className="list-disc pl-5 mt-1">
+                    {kmInvalidN > 0 && <li>KM: <b>{kmInvalidN}</b> ta noto'g'ri / takroriy (yuqoridagi 3-kartada ro'yxati bor)</li>}
+                    {ssccInvalidN > 0 && <li>SSCC: <b>{ssccInvalidN}</b> ta noto'g'ri / takroriy (yuqoridagi 4-kartada ro'yxati bor)</li>}
+                  </ul>
+                  <div className="text-xs mt-2 opacity-90">
+                    Barcha noto'g'ri qatorlarni tuzatmagunicha Dry-run ham, Submit ham ishlamaydi.
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-2">
               <Button variant="secondary" onClick={() => doRun("dry_run")}
-                      disabled={!canDryRun || running}>
+                      disabled={!canDryRun || running}
+                      title={anyInvalid ? "Avval noto'g'ri kodlarni to'g'irlang" : undefined}>
                 {running && runResult?.mode !== "submit"
                   ? <><Loader2 className="size-4 animate-spin" /> Tekshirilmoqda…</>
                   : <><FlaskConical className="size-4" /> Dry run</>}
               </Button>
               <Button variant="primary" onClick={() => doRun("submit")}
-                      disabled={!canSubmit || running}>
+                      disabled={!canSubmit || running}
+                      title={anyInvalid ? "Avval noto'g'ri kodlarni to'g'irlang" : undefined}>
                 {running && runResult?.mode === "submit"
                   ? <><Loader2 className="size-4 animate-spin" /> Yuborilmoqda…</>
                   : <><Send className="size-4" /> ASL ga yuborish</>}
               </Button>
             </div>
-            {!canSubmit && admin && (
+            {!canSubmit && admin && !anyInvalid && (
               <div className="text-xs text-warning mt-2">
                 Submit tugmasi faol bo'lishi uchun: autentifikatsiya + MOD + KM + yetarli SSCC kerak.
               </div>

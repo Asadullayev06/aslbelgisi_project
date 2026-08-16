@@ -177,7 +177,13 @@ export interface InspectorLookupResp {
 
 // Custom aggregation
 export interface KmParseResp { codes: string[]; invalid: any[][]; warnings: string[]; total_raw: number; }
-export interface SsccParseResp { codes: string[]; total: number; }
+export interface SsccParseResp {
+  codes: string[];
+  total: number;
+  invalid: any[][];      // [line_num, code, reason]
+  warnings: string[];
+  total_raw: number;
+}
 export interface ModItem { id: string; name: string; raw?: any; }
 export interface ModListResp { ok: boolean; mods: ModItem[]; error: string; }
 

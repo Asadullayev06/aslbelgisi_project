@@ -24,8 +24,11 @@ class KmParseResp(BaseModel):
     total_raw: int = 0
 
 class SsccParseResp(BaseModel):
-    codes: list[str]                         # canonicalized 20-char
+    codes: list[str]                         # canonicalized 20-char, deduped
     total: int = 0
+    invalid: list[list] = []                 # [line_num, code, reason]
+    warnings: list[str] = []
+    total_raw: int = 0
 
 
 @router.post("/parse-km", response_model=KmParseResp)
@@ -43,8 +46,14 @@ async def parse_km(
 async def parse_sscc(file: UploadFile = File(...),
                      _u: User = Depends(current_user)):
     raw = await file.read()
-    codes = csv_parser.parse_sscc_file(raw)
-    return SsccParseResp(codes=codes, total=len(codes))
+    r = csv_parser.parse_sscc_file(raw)
+    return SsccParseResp(
+        codes=r["codes"],
+        total=len(r["codes"]),
+        invalid=r["invalid"],
+        warnings=r["warnings"],
+        total_raw=r["total_raw"],
+    )
 
 
 # ── MOD list ────────────────────────────────────────────────
@@ -143,6 +152,30 @@ def run(body: RunBody, u: User = Depends(current_user)):
 
     if not body.codes:
         raise HTTPException(400, "KM ro'yxati bo'sh")
+
+    # Server-side duplicate guard for the codes actually about to be sent.
+    # The parse-* endpoints already dedupe, but a hand-crafted /run request
+    # could still contain duplicates. Reject rather than let ASL bounce us
+    # later with `code already utilized/aggregated`.
+    seen_km: set[str] = set()
+    km_dupes: list[str] = []
+    for c in body.codes:
+        if c in seen_km: km_dupes.append(c)
+        else: seen_km.add(c)
+    if km_dupes:
+        raise HTTPException(400,
+            f"KM ro'yxatida takroriy kodlar bor ({len(km_dupes)} ta). "
+            "Avval fayldagi takrorlarni olib tashlang.")
+
+    if body.sscc_source == "upload":
+        seen_ssc: set[str] = set()
+        ssc_dupes: list[str] = []
+        for s in body.sscc_uploaded:
+            if s in seen_ssc: ssc_dupes.append(s)
+            else: seen_ssc.add(s)
+        if ssc_dupes:
+            raise HTTPException(400,
+                f"SSCC ro'yxatida takroriy kodlar bor ({len(ssc_dupes)} ta).")
 
     result = custom_aggregation.run(
         api_key=body.api_key,

@@ -55,6 +55,7 @@ def parse_km_csv(file_content: bytes, validate_medicine: bool = True) -> dict:
     invalid: list[tuple[int, str, str]] = []
     warnings: list[str] = []
     total_raw = 0
+    seen: dict[str, int] = {}   # canonical code -> first line it was seen on
 
     reader = csv.reader(io.StringIO(text))
     for line_num, row in enumerate(reader, start=1):
@@ -76,7 +77,15 @@ def parse_km_csv(file_content: bytes, validate_medicine: bool = True) -> dict:
             invalid.append((line_num, code, "To'liq KM 'GS1 AI 01' bilan boshlanishi kerak"))
             continue
 
-        codes.append(to_aggregation_code(code) if validate_medicine else code)
+        canonical = to_aggregation_code(code) if validate_medicine else code
+        # Duplicate detection: same identity appearing twice would fail at ASL
+        # ("code already utilized/aggregated"); flag it up front so the user
+        # can clean the file before submit.
+        if canonical in seen:
+            invalid.append((line_num, code, f"takroriy — {seen[canonical]}-qatorda ham bor"))
+            continue
+        seen[canonical] = line_num
+        codes.append(canonical)
 
     if not codes and total_raw > 0:
         warnings.append("Barcha kodlar tekshiruvdan o'tmadi")
@@ -84,23 +93,42 @@ def parse_km_csv(file_content: bytes, validate_medicine: bool = True) -> dict:
     return {"codes": codes, "invalid": invalid, "warnings": warnings, "total_raw": total_raw}
 
 
-def parse_sscc_file(file_content: bytes) -> list[str]:
-    """Parse SSCC file. Validates each entry and returns 20-char AI(00)+SSCC
-    canonical form (what ASL expects in unitSerialNumber)."""
+def parse_sscc_file(file_content: bytes) -> dict:
+    """Parse SSCC file. Returns the same shape as parse_km_csv:
+        {codes[], invalid[(line_num, code, reason)], warnings[], total_raw}
+    Codes are canonicalized to the 20-char AI(00)+SSCC form ASL expects.
+    Detects both invalid check digits and duplicates."""
     try:
         text = file_content.decode("utf-8-sig")
     except Exception:
         text = file_content.decode("latin-1")
 
-    out: list[str] = []
-    for line in text.strip().splitlines():
-        c = line.strip().strip('"').strip("'")
+    codes: list[str] = []
+    invalid: list[tuple[int, str, str]] = []
+    warnings: list[str] = []
+    total_raw = 0
+    seen: dict[str, int] = {}
+
+    for line_num, line in enumerate(text.splitlines(), start=1):
+        c = line.strip().strip('"')
         if not c:
             continue
-        ok, _ = SSCCGenerator.validate_sscc(c)
-        if ok:
-            out.append(SSCCGenerator.to_parent_package_code(c))
-    return out
+        total_raw += 1
+        ok, err = SSCCGenerator.validate_sscc(c)
+        if not ok:
+            invalid.append((line_num, c, err))
+            continue
+        canonical = SSCCGenerator.to_parent_package_code(c)
+        if canonical in seen:
+            invalid.append((line_num, c, f"takroriy — {seen[canonical]}-qatorda ham bor"))
+            continue
+        seen[canonical] = line_num
+        codes.append(canonical)
+
+    if not codes and total_raw > 0:
+        warnings.append("Barcha SSCC tekshiruvdan o'tmadi")
+
+    return {"codes": codes, "invalid": invalid, "warnings": warnings, "total_raw": total_raw}
 
 
 def chunk_codes(codes: list[str], group_size: int) -> list[list[str]]:
