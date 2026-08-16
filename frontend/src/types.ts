@@ -217,6 +217,26 @@ export interface CustomAggRunResp {
   reports: CustomAggReport[];
   total_reports: number;
 }
+// AI Tahlil (project quality analysis)
+export interface AnalysisCheck {
+  level: "ok" | "warn" | "blocker";
+  title: string;
+  detail: string;
+  sample?: string[];
+}
+export interface AnalysisResult {
+  health: "healthy" | "warnings" | "blockers";
+  summary: {
+    km_total: number; km_aggregated: number; km_claimed: number; km_pending: number;
+    sscc_total: number; sscc_used: number;
+    closed_full: number; closed_loose: number;
+    full_planned: number; planned_km: number;
+  };
+  checks: AnalysisCheck[];
+  recommendations: string[];
+  generated_at: string;
+}
+
 export interface CustomAggRunBody {
   api_key?: string;
   codes: string[];

@@ -13,6 +13,7 @@ from ..db import get_session
 from ..models import User
 from ..schemas import LooseModeRequest, ScanRequest, ScanResponse
 from ..services import scanning
+from ..services import project_analysis
 from .state import build_state
 
 router = APIRouter(prefix="/api/projects/{project_id}", tags=["scanning"])
@@ -72,3 +73,17 @@ def delete_box(project_id: int, box_id: int,
                u: User = Depends(require_admin)):
     res = scanning.delete_box(sess, project_id, box_id)
     return _wrap(res, sess, project_id, u.id)
+
+
+@router.post("/analyze")
+def analyze(project_id: int,
+            sess: Session = Depends(get_session),
+            _u: User = Depends(current_user)):
+    """Read-only quality analysis of the project. Optional — the operator
+    triggers it from the 'AI Tahlil' button on the scan page. No mutations,
+    no ASL calls."""
+    try:
+        return project_analysis.analyze_project(sess, project_id)
+    except LookupError:
+        from fastapi import HTTPException
+        raise HTTPException(404, "loyiha topilmadi")

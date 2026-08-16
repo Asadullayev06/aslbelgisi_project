@@ -15,6 +15,7 @@ import { MissingPanel } from "@/components/MissingPanel";
 import { ScanInput, type ScanInputHandle } from "@/components/ScanInput";
 import { api } from "@/api";
 import { useAuth, isAdmin } from "@/auth";
+import { AiAnalysisButton } from "@/components/AiAnalysisButton";
 import type { ScanState, SubmitResponse, ValidateResult } from "@/types";
 
 interface Props {
@@ -150,9 +151,13 @@ export function Scan({ projectId, onExit }: Props) {
         <button onClick={onExit} className="text-muted hover:text-text inline-flex items-center gap-1">
           <ArrowLeft className="size-4" /> Loyihalar
         </button>
-        <div className="text-right">
-          <div className="text-2xl font-extrabold tracking-tight text-accent">{p.name}</div>
-          <div className="text-muted text-sm">{p.product_name}</div>
+        <div className="flex items-center gap-3">
+          {/* Optional — runs a full quality analysis of KM/SSCC pools + boxes */}
+          <AiAnalysisButton projectId={projectId} />
+          <div className="text-right">
+            <div className="text-2xl font-extrabold tracking-tight text-accent">{p.name}</div>
+            <div className="text-muted text-sm">{p.product_name}</div>
+          </div>
         </div>
       </div>
 

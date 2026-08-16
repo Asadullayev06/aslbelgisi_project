@@ -3,6 +3,7 @@ import type {
   StockRegisterResp, StockStatusResp, StockResultResp, StockVerifyResp,
   InspectorLookupResp,
   KmParseResp, SsccParseResp, ModListResp, CustomAggRunResp, CustomAggRunBody,
+  AnalysisResult,
 } from "./types";
 
 // Called when any request comes back 401 so the shell can bounce to login.
@@ -73,6 +74,8 @@ export const api = {
                       { method: "POST", body: JSON.stringify({ on }) }),
   deleteBox: (projectId: number, boxId: number) =>
     req<ScanResponse>(`/api/projects/${projectId}/boxes/${boxId}`, { method: "DELETE" }),
+  analyzeProject: (projectId: number) =>
+    req<AnalysisResult>(`/api/projects/${projectId}/analyze`, { method: "POST" }),
 
   validate: (projectId: number) =>
     req<ValidateResult>(`/api/projects/${projectId}/validate`, { method: "POST" }),
