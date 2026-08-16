@@ -188,6 +188,13 @@ export interface ModItem { id: string; name: string; raw?: any; }
 export interface ModListResp { ok: boolean; mods: ModItem[]; error: string; }
 
 export interface CustomAggGroup { index: number; sscc: string; codes_count: number; }
+export interface CodeError {
+  code: string;
+  error_code: string;
+  index: number | null;
+  property: string;
+  tags: Record<string, any>;
+}
 export interface CustomAggReport {
   report_index: number;
   unit_count: number;
@@ -198,6 +205,9 @@ export interface CustomAggReport {
   http_status: number;
   document_id: string;
   error: string;
+  verification_status: string;
+  code_errors: CodeError[];
+  timed_out: boolean;
 }
 export interface CustomAggRunResp {
   ok: boolean;

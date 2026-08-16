@@ -191,6 +191,131 @@ def _post_one(api_key: str, wrapper: dict) -> dict:
     }
 
 
+# ── document-status polling (per-code error reporting) ─────
+# ASL accepts the POST fast but processes async. Until we poll the doc-status
+# endpoint, we don't know if the aggregation actually landed or which specific
+# code(s) failed. The Streamlit app did this via wait_for_document_result +
+# get_document_errors + get_document_codes. Same pattern here.
+
+DOC_POLL_TIMEOUT_SECS = 20          # per-report cap; longer than most docs need
+DOC_POLL_INTERVAL_SECS = 2
+TERMINAL_OK   = {"PROCESSED", "DONE", "SUCCESS", "SUCCESSFUL", "ACCEPTED"}
+TERMINAL_FAIL = {"FAILED", "ERROR", "REJECTED", "DECLINED"}
+
+
+def _asl_get(api_key: str, path: str) -> dict:
+    settings = get_settings()
+    url = f"{settings.asl_api_base.rstrip('/')}{path}"
+    try:
+        r = requests.get(url, headers={
+            "Authorization": f"Bearer {api_key}",
+            "Accept": "application/json",
+        }, timeout=REQUEST_TIMEOUT)
+    except requests.RequestException as e:
+        return {"ok": False, "http_status": 0, "error": str(e), "data": None}
+    if r.status_code == 404:
+        return {"ok": False, "http_status": 404, "error": "not-found-yet",
+                "data": None}
+    try:
+        data = r.json()
+    except ValueError:
+        data = {"text": r.text}
+    return {
+        "ok": 200 <= r.status_code < 300,
+        "http_status": r.status_code,
+        "error": "" if 200 <= r.status_code < 300 else f"HTTP {r.status_code}: {data}",
+        "data": data,
+    }
+
+
+def _extract_status(payload) -> str:
+    if isinstance(payload, dict):
+        for key in ("status", "processingStatus", "documentStatus", "state"):
+            v = payload.get(key)
+            if v: return str(v).strip().upper().strip('"')
+        nested = payload.get("data")
+        if nested is not None:
+            return _extract_status(nested)
+    if isinstance(payload, list) and payload:
+        return _extract_status(payload[0])
+    if isinstance(payload, str):
+        return payload.strip().upper().strip('"')
+    return ""
+
+
+def _wait_for_result(api_key: str, doc_id: str) -> dict:
+    """Poll /storage/docs/{id} until terminal or timeout.
+    On terminal state, also fetch /storage/errors/{id} for per-code errors."""
+    deadline = time.time() + DOC_POLL_TIMEOUT_SECS
+    last_status = "PENDING"
+    while time.time() < deadline:
+        s = _asl_get(api_key, f"/public/api/v1/doc/storage/docs/{doc_id}")
+        if s["ok"]:
+            status_val = _extract_status(s["data"]) or "PENDING"
+            last_status = status_val
+            if status_val in TERMINAL_OK or status_val in TERMINAL_FAIL:
+                # Fetch per-code errors (present when status is ERROR, sometimes
+                # also present for accepted-with-warnings docs).
+                errs = _asl_get(api_key, f"/public/api/v1/doc/storage/errors/{doc_id}")
+                per_code = _summarize_doc_errors(errs.get("data"))
+                return {
+                    "final_status": status_val,
+                    "verified_ok":  status_val in TERMINAL_OK and not per_code,
+                    "code_errors":  per_code,
+                    "raw_status":   s["data"],
+                    "raw_errors":   errs.get("data") if errs.get("ok") else None,
+                }
+        elif s["http_status"] and s["http_status"] not in (404,):
+            # Non-404 error — give up rather than hammer.
+            return {
+                "final_status": "STATUS_FETCH_FAILED",
+                "verified_ok": False,
+                "code_errors": [],
+                "raw_status": {"error": s["error"]},
+                "raw_errors": None,
+            }
+        time.sleep(DOC_POLL_INTERVAL_SECS)
+
+    return {
+        "final_status": last_status,
+        "verified_ok": False,
+        "code_errors": [],
+        "raw_status": None,
+        "raw_errors": None,
+        "timed_out": True,
+    }
+
+
+def _summarize_doc_errors(payload) -> list[dict]:
+    """Normalize the /storage/errors response into a list of
+       {code, error_code, index, tags} for the UI to render."""
+    if payload is None:
+        return []
+    # Common shapes: {documentErrors: [...]}, or [{...}, ...]
+    if isinstance(payload, dict):
+        for key in ("documentErrors", "errors", "codes", "data"):
+            v = payload.get(key)
+            if isinstance(v, list):
+                payload = v
+                break
+        else:
+            return []
+    if not isinstance(payload, list):
+        return []
+    out = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        out.append({
+            "code":       str(item.get("code") or item.get("propertyValue") or ""),
+            "error_code": str(item.get("errorCode") or item.get("code_error") or ""),
+            "index":      item.get("index"),
+            "property":   str(item.get("propertyName") or ""),
+            "tags":       item.get("errorTags") or {},
+        })
+    return out
+
+
 # ─────────────────────────────────────────────────────────────
 # Main entry
 # ─────────────────────────────────────────────────────────────
@@ -243,16 +368,49 @@ def run(
         body_b64 = _build_body(batch, business_place_id, production_order_id)
         wrapper = {"documentBody": body_b64, "signature": ""}
         r = _post_one(api_key, wrapper)
+
+        # Poll for the processing result so we can surface per-code errors,
+        # not just "HTTP 200". If POST itself failed, or no documentId came
+        # back, skip polling.
+        verify = {
+            "final_status": "" if r["ok"] else "POST_FAILED",
+            "verified_ok": r["ok"],
+            "code_errors": [],
+            "timed_out": False,
+        }
+        if r["ok"] and r["document_id"]:
+            v = _wait_for_result(api_key, r["document_id"])
+            verify.update(v)
+
+        # Overall report "ok" now means: POST accepted AND doc verified
+        # (or, if the doc is still processing at timeout, we mark it
+        # 'unverified' but not hard-fail so operator can recheck later).
+        overall_ok = r["ok"] and verify.get("verified_ok", False)
+        display_error = r["error"] or ""
+        if r["ok"] and not verify.get("verified_ok"):
+            if verify.get("timed_out"):
+                display_error = (f"Yuborildi (documentId={r['document_id']}) ammo "
+                                 f"tekshirish {DOC_POLL_TIMEOUT_SECS}s ichida "
+                                 "yakunlanmadi — keyinroq qayta tekshiring.")
+            elif verify.get("final_status") in TERMINAL_FAIL:
+                display_error = (f"ASL {verify['final_status']} bilan qaytardi. "
+                                 f"Xatolar quyida — {len(verify['code_errors'])} ta kod.")
+            elif verify.get("code_errors"):
+                display_error = f"Qabul qilindi, lekin {len(verify['code_errors'])} ta kod xato bilan."
+
         reports_out.append({
-            "report_index": idx,
-            "unit_count": len(batch),
-            "code_count": sum(len(u["codes"]) for u in batch),
-            "sscc_list": [u["sscc"] for u in batch],
-            "group_indices": [u["group_index"] for u in batch],
-            "ok": r["ok"],
-            "http_status": r["http_status"],
-            "document_id": r["document_id"],
-            "error": r["error"] or "",
+            "report_index":     idx,
+            "unit_count":       len(batch),
+            "code_count":       sum(len(u["codes"]) for u in batch),
+            "sscc_list":        [u["sscc"] for u in batch],
+            "group_indices":    [u["group_index"] for u in batch],
+            "ok":               overall_ok,
+            "http_status":      r["http_status"],
+            "document_id":      r["document_id"],
+            "error":            display_error,
+            "verification_status": verify.get("final_status", ""),
+            "code_errors":      verify.get("code_errors", []),
+            "timed_out":        verify.get("timed_out", False),
         })
         if idx < len(batches):
             time.sleep(RATE_LIMIT_SLEEP_SECS)

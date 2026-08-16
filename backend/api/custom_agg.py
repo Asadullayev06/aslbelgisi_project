@@ -124,6 +124,13 @@ class GroupOut(BaseModel):
     sscc: str
     codes_count: int
 
+class CodeErrorOut(BaseModel):
+    code: str = ""
+    error_code: str = ""
+    index: int | None = None
+    property: str = ""
+    tags: dict = {}
+
 class ReportOut(BaseModel):
     report_index: int
     unit_count: int
@@ -134,6 +141,10 @@ class ReportOut(BaseModel):
     http_status: int
     document_id: str
     error: str = ""
+    # Set after ASL asynchronously processes the doc (poll of /storage/docs/{id}).
+    verification_status: str = ""           # PROCESSED | ERROR | STATUS_FETCH_FAILED | PENDING | ...
+    code_errors: list[CodeErrorOut] = []    # per-code failures returned by ASL
+    timed_out: bool = False                 # polling gave up; recheck later
 
 class RunResp(BaseModel):
     ok: bool

@@ -708,36 +708,94 @@ function ResultPanel({ r, onExportGroups }: {
       {r.reports.length > 0 && (
         <>
           <div className="text-[11px] uppercase tracking-widest text-muted mb-2 font-semibold">
-            ASL javoblari
+            ASL javoblari — POST + async holat tekshiruvi
           </div>
-          <div className="overflow-hidden rounded-lg border border-border max-h-72 overflow-y-auto">
+          <div className="rounded-lg border border-border overflow-hidden">
             <table className="w-full text-xs">
-              <thead className="bg-surface2/60 sticky top-0">
+              <thead className="bg-surface2/60">
                 <tr>
                   <Th>#</Th><Th>Qutilar</Th><Th>KM</Th>
-                  <Th>HTTP</Th><Th>documentId</Th><Th>OK</Th><Th>Xato</Th>
+                  <Th>HTTP</Th><Th>Holat</Th><Th>documentId</Th><Th>OK</Th><Th>Xato</Th>
                 </tr>
               </thead>
               <tbody>
                 {r.reports.map((x: CustomAggReport) => (
-                  <tr key={x.report_index} className="border-t border-border">
-                    <Td>{x.report_index}</Td>
-                    <Td>{x.unit_count}</Td>
-                    <Td>{x.code_count}</Td>
-                    <Td>{x.http_status}</Td>
-                    <Td className="font-mono">{x.document_id || "-"}</Td>
-                    <Td>{x.ok ? "✓" : "✗"}</Td>
-                    <Td className="max-w-[280px] truncate text-danger" title={x.error}>
-                      {x.error.slice(0, 120)}
-                    </Td>
-                  </tr>
+                  <ReportRow key={x.report_index} x={x} />
                 ))}
               </tbody>
             </table>
           </div>
+          <div className="text-xs text-muted mt-2">
+            <b>Holat</b> ustuni ASL ning async holatini ko'rsatadi: <b>PROCESSED</b> — muvaffaqiyat,
+            <b> ERROR</b> — batafsil xatolar quyida, <b>PENDING</b> — tekshirish 20s ichida yakunlanmadi
+            (keyinroq qayta tekshirish mumkin).
+          </div>
         </>
       )}
     </Card>
+  );
+}
+
+function ReportRow({ x }: { x: CustomAggReport }) {
+  const [open, setOpen] = useState(false);
+  const hasErrors = x.code_errors && x.code_errors.length > 0;
+  const statusTone = x.verification_status === "PROCESSED" ? "text-success"
+                   : x.verification_status === "ERROR"     ? "text-danger"
+                   : x.timed_out                            ? "text-warning"
+                   : "text-muted";
+  return (
+    <>
+      <tr className={cn("border-t border-border",
+        !x.ok && "bg-danger/5", x.timed_out && "bg-warning/5")}>
+        <Td>{x.report_index}</Td>
+        <Td>{x.unit_count}</Td>
+        <Td>{x.code_count}</Td>
+        <Td>{x.http_status}</Td>
+        <Td className={statusTone}>{x.verification_status || (x.ok ? "PROCESSED" : "-")}</Td>
+        <Td className="font-mono">{x.document_id || "-"}</Td>
+        <Td>{x.ok ? "✓" : "✗"}</Td>
+        <Td className="max-w-[320px] text-danger">
+          <div className="truncate" title={x.error}>{x.error}</div>
+          {hasErrors && (
+            <button onClick={() => setOpen(o => !o)}
+                    className="mt-0.5 text-[11px] underline hover:no-underline">
+              {open ? "Yashirish" : `${x.code_errors.length} ta kod xatosini ko'rsatish`}
+            </button>
+          )}
+        </Td>
+      </tr>
+      {open && hasErrors && (
+        <tr>
+          <td colSpan={8} className="border-t border-danger/30 bg-danger/5 p-3">
+            <div className="text-[11px] uppercase tracking-widest text-danger mb-1.5 font-semibold">
+              Har bir kod uchun ASL xatosi
+            </div>
+            <div className="rounded border border-danger/30 bg-surface/40 overflow-hidden">
+              <table className="w-full text-[11px]">
+                <thead>
+                  <tr>
+                    <th className="px-2 py-1 text-left text-muted">#</th>
+                    <th className="px-2 py-1 text-left text-muted">Kod</th>
+                    <th className="px-2 py-1 text-left text-muted">Sabab</th>
+                    <th className="px-2 py-1 text-left text-muted">Property</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {x.code_errors.map((e, i) => (
+                    <tr key={i} className="border-t border-border">
+                      <td className="px-2 py-1 text-muted">{e.index ?? i}</td>
+                      <td className="px-2 py-1 font-mono break-all">{e.code || "-"}</td>
+                      <td className="px-2 py-1 text-danger">{e.error_code || "-"}</td>
+                      <td className="px-2 py-1 text-muted">{e.property || "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
   );
 }
 
