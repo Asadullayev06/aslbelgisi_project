@@ -101,6 +101,36 @@ class ScanResponse(BaseModel):
     state: ScanState
 
 
+class ScanBatchRequest(BaseModel):
+    codes: list[str]
+    attempt: int = 1
+
+
+class ScanResult(BaseModel):
+    """Verdict for one code inside a batch."""
+    code: str                      # the raw string the operator scanned
+    level: Literal["hit", "err", "warn"]
+    message: str
+    kind: Optional[str] = None
+
+
+class ScanBatchResponse(BaseModel):
+    results: list[ScanResult]
+    accepted: int
+    rejected: int
+    state: ScanState
+
+
+class ScanEventOut(BaseModel):
+    id: int
+    raw_code: str
+    km_code: str
+    level: str
+    reason: str
+    username: str = ""
+    created_at: datetime
+
+
 class LooseModeRequest(BaseModel):
     on: bool
 

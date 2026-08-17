@@ -16,12 +16,15 @@ import { ScanInput, type ScanInputHandle } from "@/components/ScanInput";
 import { api } from "@/api";
 import { useAuth, isAdmin } from "@/auth";
 import { AiAnalysisButton } from "@/components/AiAnalysisButton";
-import type { ScanState, SubmitResponse, ValidateResult } from "@/types";
+import type { ScanEventOut, ScanState, SubmitResponse, ValidateResult } from "@/types";
 
 interface Props {
   projectId: number;
   onExit: () => void;
 }
+
+/** Must not exceed the server's MAX_BATCH. */
+const MAX_BATCH = 200;
 
 export function Scan({ projectId, onExit }: Props) {
   const { user } = useAuth();
@@ -52,6 +55,10 @@ export function Scan({ projectId, onExit }: Props) {
   const lastAppliedRef = useRef(0);          // when we last applied scan state
   const [queued, setQueued]   = useState(0);
   const [rejects, setRejects] = useState<{ code: string; reason: string }[]>([]);
+  // Server-side audit log: survives reload and covers BOTH operators, so a
+  // "I scanned 150 but it says 148" question always has an answer.
+  const [history, setHistory] = useState<ScanEventOut[] | null>(null);
+  const [historyBusy, setHistoryBusy] = useState(false);
 
   /** Apply state that came from a write. Stamps the clock so an in-flight
    *  poll started earlier can't land afterwards and undo it. */
@@ -99,32 +106,46 @@ export function Scan({ projectId, onExit }: Props) {
     drainingRef.current = true;
     try {
       while (queueRef.current.length) {
-        const code = queueRef.current[0];
+        // Take everything waiting, not one code. A round-trip to Neon costs
+        // ~80ms whether it carries 1 code or 100, so the faster the operator
+        // scans the bigger the batch gets and the queue self-levels.
+        const batch = queueRef.current.slice(0, MAX_BATCH);
         let settled = false;
 
-        // Up to 4 tries. `attempt` tells the server that an identical code
-        // already sitting in our own open box is a redelivery, not a dupe —
-        // so a retry after a dropped response can't produce a false error.
+        // `attempt` tells the server that a code already sitting in our own
+        // open box is a redelivery, not a duplicate — so retrying after a
+        // dropped response can't produce a false error.
         for (let attempt = 1; attempt <= 4 && !settled; attempt++) {
           try {
-            const res = await api.scan(projectId, code, attempt);
+            const res = await api.scanBatch(projectId, batch, attempt);
             applyState(res.state);
-            push(res.level, res.message);
-            if (res.level !== "hit") {
-              setRejects(r => [{ code, reason: res.message }, ...r].slice(0, 500));
+            const bad = res.results.filter(r => r.level !== "hit");
+            if (bad.length) {
+              setRejects(r => [
+                ...bad.map(b => ({ code: b.code, reason: b.message })), ...r,
+              ].slice(0, 500));
+            }
+            // One toast for the batch, plus the last rejection reason — a
+            // toast per code would be unreadable at this speed.
+            const last = res.results[res.results.length - 1];
+            if (bad.length === 0) {
+              if (last) push("hit", last.message);
+            } else {
+              push("err", `${bad.length} ta rad etildi · ${bad[bad.length - 1].message}`);
             }
             settled = true;
           } catch (e: any) {
             const status = e?.status as number | undefined;
             // 4xx is the server's verdict — retrying won't change it.
             if (status && status >= 400 && status < 500) {
-              push("err", String(e.message || e));
-              setRejects(r => [{ code, reason: String(e.message || e) }, ...r].slice(0, 500));
+              const reason = String(e.message || e);
+              push("err", reason);
+              setRejects(r => [...batch.map(c => ({ code: c, reason })), ...r].slice(0, 500));
               settled = true;
             } else if (attempt === 4) {
               const reason = `ulanish xatosi: ${String(e?.message || e)}`;
               push("err", reason);
-              setRejects(r => [{ code, reason }, ...r].slice(0, 500));
+              setRejects(r => [...batch.map(c => ({ code: c, reason })), ...r].slice(0, 500));
               settled = true;
             } else {
               await new Promise(r => setTimeout(r, 250 * attempt));
@@ -132,7 +153,7 @@ export function Scan({ projectId, onExit }: Props) {
           }
         }
 
-        queueRef.current.shift();
+        queueRef.current.splice(0, batch.length);
         setQueued(queueRef.current.length);
       }
     } finally {
@@ -151,6 +172,16 @@ export function Scan({ projectId, onExit }: Props) {
     setQueued(queueRef.current.length);
     void drain();
   }, [drain]);
+
+  async function loadHistory() {
+    setHistoryBusy(true);
+    try {
+      setHistory(await api.scanEvents(projectId, "err", 300));
+    } catch (e: any) {
+      push("err", String(e.message || e));
+    }
+    setHistoryBusy(false);
+  }
 
   async function doUndo() {
     try {
@@ -409,33 +440,74 @@ export function Scan({ projectId, onExit }: Props) {
           {/* Rejected scans — persistent. A toast disappears in a couple of
               seconds and an operator working at speed will never see it; this
               list is the record of every barcode the system did NOT accept. */}
-          {rejects.length > 0 && (
-            <Card>
-              <CardHead
-                title="Qabul qilinmagan skanerlar"
-                right={
-                  <>
-                    <Badge tone="danger">{rejects.length}</Badge>
+          <Card>
+            <CardHead
+              title="Qabul qilinmagan skanerlar"
+              right={
+                <>
+                  {rejects.length > 0 && <Badge tone="danger">{rejects.length}</Badge>}
+                  <Button variant="outline" size="sm"
+                          onClick={loadHistory} disabled={historyBusy}>
+                    {historyBusy ? "…" : "Tarix"}
+                  </Button>
+                  {rejects.length > 0 && (
                     <Button variant="outline" size="sm" onClick={() => setRejects([])}>
                       Tozalash
                     </Button>
-                  </>
-                }
-              />
-              <div className="text-sm text-muted mb-2">
-                Bu kodlar bazaga tushmadi. Sababini ko'ring va kerak bo'lsa qayta skanerlang.
+                  )}
+                </>
+              }
+            />
+            {rejects.length === 0 && !history && (
+              <div className="text-sm text-muted">
+                Bu seansda hamma skaner qabul qilindi. Oldingi rad etishlarni
+                ko'rish uchun <b className="text-text">Tarix</b> tugmasini bosing.
               </div>
-              <div className="max-h-56 overflow-auto space-y-1">
-                {rejects.map((r, i) => (
-                  <div key={`${r.code}-${i}`}
-                       className="rounded-lg border border-danger/30 bg-danger/5 px-2 py-1.5">
-                    <div className="font-mono text-xs break-all">{r.code}</div>
-                    <div className="text-xs text-danger mt-0.5">{r.reason}</div>
+            )}
+            {rejects.length > 0 && (
+              <>
+                <div className="text-sm text-muted mb-2">
+                  Bu kodlar bazaga tushmadi. Sababini ko'ring va kerak bo'lsa qayta skanerlang.
+                </div>
+                <div className="max-h-56 overflow-auto space-y-1">
+                  {rejects.map((r, i) => (
+                    <div key={`${r.code}-${i}`}
+                         className="rounded-lg border border-danger/30 bg-danger/5 px-2 py-1.5">
+                      <div className="font-mono text-xs break-all">{r.code}</div>
+                      <div className="text-xs text-danger mt-0.5">{r.reason}</div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+            {history && (
+              <div className="mt-3">
+                <div className="text-xs uppercase tracking-widest text-muted mb-1">
+                  Server tarixi — barcha operatorlar ({history.length})
+                </div>
+                {history.length === 0 ? (
+                  <div className="text-sm text-muted italic">
+                    Rad etilgan skaner yo'q.
                   </div>
-                ))}
+                ) : (
+                  <div className="max-h-56 overflow-auto space-y-1">
+                    {history.map(h => (
+                      <div key={h.id}
+                           className="rounded-lg border border-border bg-surface2/40 px-2 py-1.5">
+                        <div className="font-mono text-xs break-all">
+                          {h.raw_code || h.km_code}
+                        </div>
+                        <div className="text-xs text-danger mt-0.5">{h.reason}</div>
+                        <div className="text-[10px] text-muted mt-0.5">
+                          {h.username || "—"} · {new Date(h.created_at).toLocaleString()}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
-            </Card>
-          )}
+            )}
+          </Card>
 
           <MissingPanel
             title="Skanerlanmagan KM kodlar"

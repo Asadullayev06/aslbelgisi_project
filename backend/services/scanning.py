@@ -14,13 +14,17 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import and_, delete, func, select, update
+from sqlalchemy import and_, delete, func, insert, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from ..models import Box, BoxPool, KmPool, OpenBox, Project, User
+from ..models import Box, BoxPool, KmPool, OpenBox, Project, ScanEvent, User
 from .codes import canonical_km, classify_scan, normalize_sscc
+
+# Bound the work in one transaction. The client sends whatever has piled up in
+# its queue; anything past this is simply handled by the next request.
+MAX_BATCH = 200
 
 
 # ── result helpers ──────────────────────────────────────────
@@ -41,7 +45,7 @@ def _get_or_create_open_box(sess: Session, project_id: int, user_id: int,
     the create idempotent.
 
     With `lock=True` the row is taken FOR UPDATE so the capacity check and the
-    KM claim in _scan_km are one atomic step — two guns firing into the same
+    KM claim in _claim_km_run are one atomic step — two guns firing into the same
     box can no longer both read the same count.
     """
     sess.execute(
@@ -85,85 +89,9 @@ def _plan_full_boxes(project: Project) -> int:
 # ═════════════════════════════════════════════════════════════
 def scan_code(sess: Session, project_id: int, user_id: int, raw: str,
               attempt: int = 1) -> dict:
-    """Route a raw scanner input to the right handler.
-
-    We accept any code and dispatch based on shape (KM vs SSCC), so the
-    operator only needs one input field.
-
-    `attempt` > 1 means the client is re-sending after a network failure. The
-    first try may well have committed before the connection dropped, so a code
-    already sitting in this operator's own open box counts as success instead
-    of a duplicate error — that makes client-side retries safe.
-    """
-    kind = classify_scan(raw)
-    if kind == "unknown":
-        return _err(f"tanib bo'lmadigan skaner: {raw[:40]}")
-    if kind == "km":
-        return _scan_km(sess, project_id, user_id, canonical_km(raw), attempt)
-    return _scan_sscc(sess, project_id, user_id, normalize_sscc(raw))
-
-
-def _scan_km(sess: Session, project_id: int, user_id: int, km: str,
-             attempt: int = 1) -> dict:
-    project = sess.get(Project, project_id)
-    if not project or project.status != "active":
-        return _err("loyiha faol emas")
-
-    # FOR UPDATE: serialize this operator's own scans so the capacity check
-    # below and the claim underneath it cannot interleave.
-    ob = _get_or_create_open_box(sess, project_id, user_id, lock=True)
-    cap = _effective_capacity(project, ob)
-    now_count = _open_box_count(sess, ob.id)
-
-    if now_count >= cap:
-        return _err(f"quti to'ldi ({now_count}/{cap}). Quti barkodini skanerlang.",
-                    box_full=True, current=now_count, capacity=cap)
-
-    # Atomic claim. plan.md §4.1
-    updated = sess.execute(
-        update(KmPool)
-        .where(
-            KmPool.project_id == project_id,
-            KmPool.km_code    == km,
-            KmPool.status     == "pending",
-        )
-        .values(status="claimed", claimed_by=user_id,
-                claimed_at=datetime.now(timezone.utc),
-                open_box_id=ob.id)
-        .returning(KmPool.id)
-    ).scalar_one_or_none()
-
-    if updated is not None:
-        new_count = now_count + 1
-        return _hit(f"qabul qilindi ({new_count}/{cap})  ·  {km}",
-                    current=new_count, capacity=cap, kind="km", code=km)
-
-    # Zero rows — figure out why (name WHICH operator got it, plan.md §4.1).
-    row = sess.execute(
-        select(KmPool.status, KmPool.claimed_by, KmPool.open_box_id,
-               User.username, Box.sscc)
-        .select_from(KmPool)
-        .join(User, User.id == KmPool.claimed_by, isouter=True)
-        .join(Box,  Box.id  == KmPool.box_id,     isouter=True)
-        .where(KmPool.project_id == project_id, KmPool.km_code == km)
-    ).one_or_none()
-    if row is None:
-        return _err(f"ro'yxatda yo'q kod: {km}")
-    status, claimed_by, open_box_id, other_name, box_sscc = row
-    if status == "aggregated":
-        tail = f" ({box_sscc})" if box_sscc else ""
-        return _err(f"boshqa qutida ishlatilgan{tail}: {km}")
-    # status == 'claimed'
-    if claimed_by == user_id:
-        if attempt > 1 and open_box_id == ob.id:
-            # Our own earlier attempt did land; the reply just never made it
-            # back. Report success so the retry is a no-op, not a false error.
-            return _hit(f"qabul qilindi ({now_count}/{cap})  ·  {km}",
-                        current=now_count, capacity=cap, kind="km", code=km,
-                        deduped=True)
-        return _err(f"joriy qutingizda takroriy: {km}")
-    who = other_name or f"user#{claimed_by}"
-    return _err(f"⚠ {who} hozir skanerladi: {km}")
+    """Single-code scan. Thin wrapper over scan_batch so there is exactly one
+    implementation of the accept/reject rules — two copies would drift."""
+    return scan_batch(sess, project_id, user_id, [raw], attempt=attempt)[0]
 
 
 def _scan_sscc(sess: Session, project_id: int, user_id: int, sscc: str) -> dict:
@@ -174,7 +102,7 @@ def _scan_sscc(sess: Session, project_id: int, user_id: int, sscc: str) -> dict:
     if not project or project.status != "active":
         return _err("loyiha faol emas")
 
-    # Lock order is always projects → open_boxes (see _scan_km), so a KM scan
+    # Lock order is always projects → open_boxes (see scan_batch), so a KM scan
     # and a box-close racing each other can't deadlock.
     ob = sess.execute(
         select(OpenBox)
@@ -230,17 +158,19 @@ def _scan_sscc(sess: Session, project_id: int, user_id: int, sscc: str) -> dict:
         return _err(f"rejadagi to'liq qutilar soni ({_plan_full_boxes(project)}) "
                     "to'ldi - loose rejimga o'ting yoki finalize qiling")
 
-    # Commit the box.
+    # Commit the box. SAVEPOINT, not a plain try/except: this runs inside a
+    # batch, and a bare sess.rollback() here would throw away every KM claimed
+    # earlier in the same request.
     try:
-        box = Box(
-            project_id=project_id, sscc=sscc, capacity=cap,
-            is_loose=ob.is_loose, closed_by=user_id,
-        )
-        sess.add(box)
-        sess.flush()
+        with sess.begin_nested():
+            box = Box(
+                project_id=project_id, sscc=sscc, capacity=cap,
+                is_loose=ob.is_loose, closed_by=user_id,
+            )
+            sess.add(box)
+            sess.flush()
     except IntegrityError:
         # Race for the loose slot: ux_boxes_one_loose caught it.
-        sess.rollback()
         return _err("loose quti allaqachon yopilgan")
 
     sess.execute(
@@ -249,11 +179,193 @@ def _scan_sscc(sess: Session, project_id: int, user_id: int, sscc: str) -> dict:
         .values(status="aggregated", box_id=box.id, open_box_id=None)
     )
     sess.delete(ob)
+    # Make the delete visible now — a batch may open a fresh box straight after
+    # this, and an unflushed delete would hand back the stale row.
+    sess.flush()
 
     tag = "LOOSE " if box.is_loose else ""
     return _hit(f"{tag}quti yopildi - {sscc}  ·  {n} ta kod",
                 closed_box_id=box.id, sscc=sscc, is_loose=box.is_loose,
                 codes_in_box=n, kind="sscc")
+
+
+# ═════════════════════════════════════════════════════════════
+# Batched scanning
+# ═════════════════════════════════════════════════════════════
+# Why this exists: a round-trip to Neon costs ~80ms, and the per-code path
+# needed roughly eight of them, so one barcode took over half a second and a
+# fast operator outran the system badly. A whole burst now travels in one
+# request and resolves in ~4 statements regardless of how many codes it holds.
+
+def _record_events(sess: Session, project_id: int, user_id: int,
+                   rows: list[tuple[str, str, str, str]]) -> None:
+    """Bulk-append to the audit log: (raw, km, level, reason)."""
+    if not rows:
+        return
+    sess.execute(
+        insert(ScanEvent),
+        [{"project_id": project_id, "user_id": user_id, "raw_code": raw[:400],
+          "km_code": km[:400], "level": level, "reason": reason[:500]}
+         for (raw, km, level, reason) in rows],
+    )
+
+
+def _claim_km_run(sess: Session, project: Project, user_id: int, ob: OpenBox,
+                  run: list[tuple[int, str, str]], results: list[Optional[dict]],
+                  attempt: int) -> None:
+    """Claim a consecutive run of KM codes for one open box.
+
+    `run` is [(result_index, raw, canonical_km)] in scan order. Fills
+    `results` in place. Costs one UPDATE plus, only if something failed, one
+    diagnostic SELECT — instead of two statements per code.
+    """
+    cap   = _effective_capacity(project, ob)
+    count = _open_box_count(sess, ob.id)
+
+    # In-burst duplicates: the same code twice in one batch is a double scan,
+    # and only the first can be claimed.
+    seen: set[str] = set()
+    todo: list[tuple[int, str, str]] = []
+    for idx, raw, km in run:
+        if km in seen:
+            results[idx] = _err(f"joriy qutingizda takroriy: {km}", kind="km", code=km)
+        else:
+            seen.add(km)
+            todo.append((idx, raw, km))
+
+    failed: list[tuple[int, str, str]] = []
+    pos = 0
+    while pos < len(todo):
+        room = cap - count
+        if room <= 0:
+            break
+        chunk = todo[pos:pos + room]
+        claimed = {c for (c,) in sess.execute(
+            update(KmPool)
+            .where(KmPool.project_id == project.id,
+                   KmPool.km_code.in_([km for (_, _, km) in chunk]),
+                   KmPool.status == "pending")
+            .values(status="claimed", claimed_by=user_id,
+                    claimed_at=datetime.now(timezone.utc), open_box_id=ob.id)
+            .returning(KmPool.km_code)
+        )}
+        # Report in scan order so the running count reads correctly.
+        for idx, raw, km in chunk:
+            if km in claimed:
+                count += 1
+                results[idx] = _hit(f"qabul qilindi ({count}/{cap})  ·  {km}",
+                                    current=count, capacity=cap, kind="km", code=km)
+            else:
+                failed.append((idx, raw, km))
+        pos += len(chunk)
+        if not claimed:
+            break        # nothing in this chunk was claimable; stop retrying
+
+    # Codes we never got room for. They still go through diagnosis below: a
+    # code that is already sitting in this box is a duplicate (or a retry of
+    # one that landed), and calling that "box full" would send the operator
+    # off to rescan something the system already has.
+    no_room = {km for (_, _, km) in todo[pos:]}
+    failed.extend(todo[pos:])
+
+    if not failed:
+        return
+
+    # One diagnostic query explains every failure in the run.
+    info = {km: (status, claimed_by, open_box_id, uname, sscc) for
+            (km, status, claimed_by, open_box_id, uname, sscc) in sess.execute(
+        select(KmPool.km_code, KmPool.status, KmPool.claimed_by,
+               KmPool.open_box_id, User.username, Box.sscc)
+        .select_from(KmPool)
+        .join(User, User.id == KmPool.claimed_by, isouter=True)
+        .join(Box,  Box.id  == KmPool.box_id,     isouter=True)
+        .where(KmPool.project_id == project.id,
+               KmPool.km_code.in_([km for (_, _, km) in failed]))
+    )}
+    for idx, raw, km in failed:
+        row = info.get(km)
+        if row is None:
+            results[idx] = _err(f"ro'yxatda yo'q kod: {km}", kind="km", code=km)
+            continue
+        status, claimed_by, open_box_id, uname, sscc = row
+        if status == "pending":
+            # Only reachable when the box had no room left for it.
+            results[idx] = _err(
+                f"quti to'ldi ({count}/{cap}). Quti barkodini skanerlang.",
+                box_full=True, current=count, capacity=cap, kind="km", code=km)
+        elif status == "aggregated":
+            tail = f" ({sscc})" if sscc else ""
+            results[idx] = _err(f"boshqa qutida ishlatilgan{tail}: {km}",
+                                kind="km", code=km)
+        elif claimed_by == user_id:
+            if attempt > 1 and open_box_id == ob.id:
+                # Our own earlier delivery did land; the reply was lost.
+                results[idx] = _hit(f"qabul qilindi ({count}/{cap})  ·  {km}",
+                                    current=count, capacity=cap,
+                                    kind="km", code=km, deduped=True)
+            else:
+                results[idx] = _err(f"joriy qutingizda takroriy: {km}",
+                                    kind="km", code=km)
+        else:
+            who = uname or f"user#{claimed_by}"
+            results[idx] = _err(f"⚠ {who} hozir skanerladi: {km}", kind="km", code=km)
+
+
+def scan_batch(sess: Session, project_id: int, user_id: int,
+               raws: list[str], attempt: int = 1) -> list[dict]:
+    """Process a burst of scans in order, in one transaction.
+
+    Order is preserved exactly as the operator scanned, so a box-closing SSCC
+    still applies to the KMs that came before it and not to the ones after.
+    """
+    raws = raws[:MAX_BATCH]
+    results: list[Optional[dict]] = [None] * len(raws)
+
+    project = sess.get(Project, project_id)
+    if not project or project.status != "active":
+        out = [_err("loyiha faol emas") for _ in raws]
+        _record_events(sess, project_id, user_id,
+                       [(r, "", "err", "loyiha faol emas") for r in raws])
+        return out
+
+    # Classify everything up front, then walk it as runs of KM separated by
+    # SSCCs. Each run is claimed in bulk; each SSCC closes the box.
+    parsed: list[tuple[int, str, str, str]] = []      # (idx, kind, raw, code)
+    for i, raw in enumerate(raws):
+        kind = classify_scan(raw)
+        if kind == "km":
+            parsed.append((i, "km", raw, canonical_km(raw)))
+        elif kind == "sscc":
+            try:
+                parsed.append((i, "sscc", raw, normalize_sscc(raw)))
+            except ValueError as e:
+                results[i] = _err(str(e))
+        else:
+            results[i] = _err(f"tanib bo'lmadigan skaner: {raw[:40]}")
+
+    ob = _get_or_create_open_box(sess, project_id, user_id, lock=True)
+
+    run: list[tuple[int, str, str]] = []
+    for idx, kind, raw, code in parsed:
+        if kind == "km":
+            run.append((idx, raw, code))
+            continue
+        if run:
+            _claim_km_run(sess, project, user_id, ob, run, results, attempt)
+            run = []
+        results[idx] = _scan_sscc(sess, project_id, user_id, code)
+        # The box was consumed (or the close failed); either way re-resolve it
+        # before any further KMs are claimed.
+        ob = _get_or_create_open_box(sess, project_id, user_id, lock=True)
+    if run:
+        _claim_km_run(sess, project, user_id, ob, run, results, attempt)
+
+    final = [r if r is not None else _err("qayta ishlanmadi") for r in results]
+    _record_events(sess, project_id, user_id, [
+        (raws[i], (res.get("code") or ""), res["level"], res["message"])
+        for i, res in enumerate(final)
+    ])
+    return final
 
 
 # ═════════════════════════════════════════════════════════════

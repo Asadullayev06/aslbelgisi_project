@@ -160,6 +160,32 @@ class BoxPool(Base):
     )
 
 
+class ScanEvent(Base):
+    """Append-only record of every barcode the system was asked to accept.
+
+    Exists so "the operator scanned 150 but only 148 landed" is always
+    answerable. Written in bulk once per batch, so it costs one statement.
+    """
+    __tablename__ = "scan_events"
+    id:         Mapped[int]      = mapped_column(BigInteger, primary_key=True)
+    project_id: Mapped[int]      = mapped_column(BigInteger,
+                                        ForeignKey("projects.id", ondelete="CASCADE"),
+                                        nullable=False)
+    user_id:    Mapped[Optional[int]] = mapped_column(BigInteger,
+                                        ForeignKey("users.id", ondelete="SET NULL"),
+                                        nullable=True)
+    raw_code:   Mapped[str]      = mapped_column(Text, nullable=False, default="")
+    km_code:    Mapped[str]      = mapped_column(Text, nullable=False, default="")
+    level:      Mapped[str]      = mapped_column(Text, nullable=False)   # hit | err | warn
+    reason:     Mapped[str]      = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),
+                                        server_default=func.now(), nullable=False)
+    __table_args__ = (
+        Index("ix_scan_events_project_time", "project_id", "created_at"),
+        Index("ix_scan_events_project_level", "project_id", "level"),
+    )
+
+
 class Submission(Base):
     """One row per ASL report request. Written BEFORE the network call for
     crash-safety, updated after."""

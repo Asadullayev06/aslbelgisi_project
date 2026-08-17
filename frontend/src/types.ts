@@ -68,6 +68,32 @@ export interface ScanResponse {
   state: ScanState;
 }
 
+/** One code's verdict inside a batch. */
+export interface ScanResult {
+  code: string;
+  level: FlashLevel;
+  message: string;
+  kind?: string | null;
+}
+
+export interface ScanBatchResponse {
+  results: ScanResult[];
+  accepted: number;
+  rejected: number;
+  state: ScanState;
+}
+
+/** A row of the server-side scan audit log. */
+export interface ScanEventOut {
+  id: number;
+  raw_code: string;
+  km_code: string;
+  level: string;
+  reason: string;
+  username: string;
+  created_at: string;
+}
+
 export interface ValidateResult {
   ok: boolean;
   reasons: string[];

@@ -1,5 +1,6 @@
 import type {
-  ProjectSummary, ScanResponse, ScanState, SubmitResponse, ValidateResult,
+  ProjectSummary, ScanResponse, ScanBatchResponse, ScanEventOut,
+  ScanState, SubmitResponse, ValidateResult,
   StockRegisterResp, StockStatusResp, StockResultResp, StockVerifyResp,
   InspectorLookupResp,
   KmParseResp, SsccParseResp, ModListResp, CustomAggRunResp, CustomAggRunBody,
@@ -68,6 +69,13 @@ export const api = {
   scan: (projectId: number, code: string, attempt = 1) =>
     req<ScanResponse>(`/api/projects/${projectId}/scan`,
                       { method: "POST", body: JSON.stringify({ code, attempt }) }),
+  /** Whole burst in one round-trip — see the queue in Scan.tsx. */
+  scanBatch: (projectId: number, codes: string[], attempt = 1) =>
+    req<ScanBatchResponse>(`/api/projects/${projectId}/scan-batch`,
+                           { method: "POST", body: JSON.stringify({ codes, attempt }) }),
+  scanEvents: (projectId: number, level?: string, limit = 200) =>
+    req<ScanEventOut[]>(`/api/projects/${projectId}/scan-events`
+      + `?limit=${limit}` + (level ? `&level=${level}` : "")),
   undo: (projectId: number) =>
     req<ScanResponse>(`/api/projects/${projectId}/undo`, { method: "POST" }),
   discard: (projectId: number) =>
