@@ -391,6 +391,46 @@ export function Scan({ projectId, onExit }: Props) {
     setSubmitting(false);
   }
 
+  async function doResubmit() {
+    if (!apiKey.trim()) {
+      push("err", "Asl Belgisi API kalitini kiriting");
+      return;
+    }
+    if (!businessPlaceId.trim()) {
+      push("err", "MOD (businessPlaceId) kiritilishi shart");
+      return;
+    }
+    // Strong confirmation: two steps because the wrong company's documents on
+    // ASL do NOT get voided automatically — the operator must have done that
+    // on ASL's side first, this only clears the LOCAL submission log so a
+    // fresh set of documents can be sent.
+    const ok = confirm(
+      "QAYTA YUBORISH\n\n" +
+      "• Loyihaning oldingi yuborish yozuvi tozalanadi\n" +
+      "• Barcha qutilar yuqoridagi hisob (INN + API + MOD) bilan qaytadan yuboriladi\n" +
+      "• Skanerlangan kodlar VA yopilgan qutilar o'zgarmaydi\n\n" +
+      "MUHIM: Asl Belgisi tomonidagi eski hujjat(lar) avvaldan bekor qilinganmi?\n" +
+      "Aks holda ular sizning kompaniyangizda qolib ketadi.\n\n" +
+      "Davom etamizmi?"
+    );
+    if (!ok) return;
+    setSubmitting(true);
+    try {
+      const r = await api.resubmit(projectId, {
+        api_key: apiKey,
+        inn: inn.trim(),
+        business_place_id: businessPlaceId.trim(),
+        production_order_id: productionOrderId.trim(),
+      });
+      setSubmitResult(r);
+      if (r.ok) push("hit", `✓ Qayta yuborildi (${r.total_reports} ta so'rov)`);
+      else push("err", "Qayta yuborishda muammo: " + (r.error || "quyidagi jadvalga qarang"));
+      const st = await api.getProject(projectId);
+      setState(st);
+    } catch (e: any) { push("err", String(e.message || e)); }
+    setSubmitting(false);
+  }
+
   async function fetchMods() {
     if (!inn.trim() || !apiKey.trim()) {
       push("err", "INN va API kalitini avval kiriting");
@@ -698,10 +738,16 @@ export function Scan({ projectId, onExit }: Props) {
               Barcha reja bajarilganini tekshiring va Asl Belgisi ga ommaviy agregatsiya so'rovini yuboring.
             </div>
 
-            <Button variant="primary" size="lg" className="w-full mb-2"
-                    onClick={doValidate} disabled={validating || p.status !== "active"}>
-              {validating ? "Tekshirilmoqda…" : "Tekshirish va yakunlash"}
-            </Button>
+            {/* Validate button hidden for already-submitted projects: the
+                data has demonstrably been valid before, and we want the
+                credentials form + Qayta yuborish reachable straight away
+                (even after a page refresh). */}
+            {p.status !== "submitted" && (
+              <Button variant="primary" size="lg" className="w-full mb-2"
+                      onClick={doValidate} disabled={validating || p.status !== "active"}>
+                {validating ? "Tekshirilmoqda…" : "Tekshirish va yakunlash"}
+              </Button>
+            )}
 
             {validation && !validation.ok && (
               <ul className="text-danger text-sm space-y-1 mb-3 list-disc pl-5">
@@ -709,7 +755,7 @@ export function Scan({ projectId, onExit }: Props) {
               </ul>
             )}
 
-            {validation?.ok && (
+            {(validation?.ok || p.status === "submitted") && (
               <div className="space-y-3">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <Field label="Kompaniya INN">
@@ -753,11 +799,34 @@ export function Scan({ projectId, onExit }: Props) {
                          placeholder="ixtiyoriy" />
                 </Field>
 
-                <Button variant="primary" size="lg" className="w-full"
-                        onClick={doSubmit} disabled={submitting}>
-                  <Send className="size-4" />
-                  {submitting ? "Yuborilmoqda…" : "Mass agregatsiyani yuborish"}
-                </Button>
+                {p.status === "submitted" ? (
+                  <>
+                    <div className="rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm">
+                      <div className="font-semibold text-warning mb-1">
+                        Loyiha allaqachon yuborilgan
+                      </div>
+                      <div className="text-muted">
+                        Agar avval noto'g'ri hisob bilan yuborilgan bo'lsa,
+                        Asl Belgisi tomonida eski hujjatni bekor qilib, so'ng
+                        <b className="text-text"> Qayta yuborish</b> tugmasi
+                        orqali to'g'ri hisob bilan qayta yuboring.
+                      </div>
+                    </div>
+                    <Button variant="danger" size="lg" className="w-full"
+                            onClick={doResubmit} disabled={submitting}>
+                      <Send className="size-4" />
+                      {submitting
+                        ? "Qayta yuborilmoqda…"
+                        : "Qayta yuborish (boshqa hisob bilan)"}
+                    </Button>
+                  </>
+                ) : (
+                  <Button variant="primary" size="lg" className="w-full"
+                          onClick={doSubmit} disabled={submitting}>
+                    <Send className="size-4" />
+                    {submitting ? "Yuborilmoqda…" : "Mass agregatsiyani yuborish"}
+                  </Button>
+                )}
               </div>
             )}
 

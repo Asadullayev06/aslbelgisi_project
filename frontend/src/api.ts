@@ -126,6 +126,20 @@ export const api = {
                             business_place_id: body.business_place_id || "",
                             production_order_id: body.production_order_id || "",
                           }) }),
+  /** Re-send a project that's already in 'submitted' state, e.g. after the
+   *  first send used the wrong company's credentials. Server-side guard
+   *  refuses anything not currently 'submitted'. */
+  resubmit: (projectId: number, body: {
+    api_key?: string; inn?: string;
+    business_place_id?: string; production_order_id?: string;
+  }) =>
+    req<SubmitResponse>(`/api/projects/${projectId}/resubmit`,
+                        { method: "POST", body: JSON.stringify({
+                            api_key: body.api_key || null,
+                            inn: body.inn || "",
+                            business_place_id: body.business_place_id || "",
+                            production_order_id: body.production_order_id || "",
+                          }) }),
 
   // GTIN stock (Ostatok)
   stockVerify: (inn: string, api_key: string) =>
