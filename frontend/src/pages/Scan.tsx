@@ -67,6 +67,17 @@ export function Scan({ projectId, onExit }: Props) {
     lastAppliedRef.current = Date.now();
   }, []);
 
+  // Queued codes live only in memory. The window is small (a batch drains in
+  // well under a second) but closing the tab mid-drain would lose them, so
+  // make the browser ask first.
+  useEffect(() => {
+    const warn = (e: BeforeUnloadEvent) => {
+      if (queueRef.current.length) e.preventDefault();
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, []);
+
   // Initial load + live polling. Polling refreshes counters, closed-box list,
   // and other operators' work without touching the scan input's DOM element
   // (React reconciles by key; the input keeps its focus).
