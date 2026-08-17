@@ -33,6 +33,11 @@ export function Scan({ projectId, onExit }: Props) {
   const [submitting, setSubmitting] = useState(false);
   const [submitResult, setSubmitResult] = useState<SubmitResponse | null>(null);
   const [apiKey, setApiKey] = useState("");
+  const [inn, setInn] = useState("");
+  const [businessPlaceId, setBusinessPlaceId] = useState("");
+  const [productionOrderId, setProductionOrderId] = useState("");
+  const [modList, setModList] = useState<{ id: string; name: string }[] | null>(null);
+  const [modLoading, setModLoading] = useState(false);
   const { flashes, push, dismiss } = useFlashes();
   const scannerRef = useRef<ScanInputHandle>(null);
 
@@ -43,7 +48,15 @@ export function Scan({ projectId, onExit }: Props) {
     let alive = true;
     const load = () =>
       api.getProject(projectId)
-        .then(s => { if (alive) setState(s); })
+        .then(s => {
+          if (!alive) return;
+          setState(s);
+          // Prefill submit credentials from whatever was saved to the project
+          // (e.g. a prior submit attempt). Only fill if the field is empty
+          // so we never clobber what the operator is typing.
+          setBusinessPlaceId(v => v || s.project.business_place_id || "");
+          setProductionOrderId(v => v || s.project.production_order_id || "");
+        })
         .catch(e => { if (alive) setLoadingErr(String(e)); });
     load();
     const t = setInterval(load, 2000);
@@ -107,10 +120,23 @@ export function Scan({ projectId, onExit }: Props) {
     setValidating(false);
   }
   async function doSubmit() {
+    if (!apiKey.trim()) {
+      push("err", "Asl Belgisi API kalitini kiriting");
+      return;
+    }
+    if (!businessPlaceId.trim()) {
+      push("err", "MOD (businessPlaceId) kiritilishi shart");
+      return;
+    }
     if (!confirm("Barcha qutilar Asl Belgisi ga yuboriladi. Davom etamizmi?")) return;
     setSubmitting(true);
     try {
-      const r = await api.submit(projectId, apiKey || undefined);
+      const r = await api.submit(projectId, {
+        api_key: apiKey,
+        inn: inn.trim(),
+        business_place_id: businessPlaceId.trim(),
+        production_order_id: productionOrderId.trim(),
+      });
       setSubmitResult(r);
       if (r.ok) push("hit", `✓ Yuborildi (${r.total_reports} ta so'rov)`);
       else push("err", "Yuborishda muammo: " + (r.error || "quyidagi jadvalga qarang"));
@@ -118,6 +144,23 @@ export function Scan({ projectId, onExit }: Props) {
       setState(st);
     } catch (e: any) { push("err", String(e.message || e)); }
     setSubmitting(false);
+  }
+
+  async function fetchMods() {
+    if (!inn.trim() || !apiKey.trim()) {
+      push("err", "INN va API kalitini avval kiriting");
+      return;
+    }
+    setModLoading(true);
+    try {
+      const r = await api.customModList(inn.trim(), apiKey.trim());
+      if (!r.ok) { push("err", r.error || "MOD ro'yxatini yuklab bo'lmadi"); }
+      else {
+        setModList(r.mods.map(m => ({ id: m.id, name: m.name })));
+        push("hit", `${r.mods.length} ta MOD topildi`);
+      }
+    } catch (e: any) { push("err", String(e.message || e)); }
+    setModLoading(false);
   }
 
   if (loadingErr) {
@@ -328,10 +371,48 @@ export function Scan({ projectId, onExit }: Props) {
 
             {validation?.ok && (
               <div className="space-y-3">
-                <Field label="Asl Belgisi API kaliti (env dan olinmasa)">
-                  <Input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)}
-                         placeholder="Bearer …" />
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <Field label="Kompaniya INN">
+                    <Input value={inn} onChange={e => setInn(e.target.value)}
+                           placeholder="masalan 300123456" />
+                  </Field>
+                  <Field label="Asl Belgisi API kaliti">
+                    <Input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)}
+                           placeholder="Bearer …" />
+                  </Field>
+                </div>
+
+                <Field label="businessPlaceId (MOD)">
+                  <div className="flex gap-2">
+                    <Input value={businessPlaceId}
+                           onChange={e => { setBusinessPlaceId(e.target.value); setModList(null); }}
+                           placeholder="masalan 27" />
+                    <Button variant="outline" size="sm" onClick={fetchMods}
+                            disabled={modLoading || !inn.trim() || !apiKey.trim()}>
+                      {modLoading ? "…" : "MOD ro'yxati"}
+                    </Button>
+                  </div>
                 </Field>
+                {modList && modList.length > 0 && (
+                  <div className="rounded-lg border border-border bg-surface2/40 p-2 max-h-40 overflow-auto">
+                    {modList.map(m => (
+                      <button key={m.id} type="button"
+                              onClick={() => setBusinessPlaceId(m.id)}
+                              className={"w-full text-left px-2 py-1 rounded text-sm hover:bg-accent/10 "
+                                + (businessPlaceId === m.id ? "bg-accent/15 text-accent" : "")}>
+                        <span className="font-mono">{m.id}</span>
+                        {m.name && <span className="text-muted ml-2">— {m.name}</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                <Field label="productionOrderId (ixtiyoriy)">
+                  <Input value={productionOrderId}
+                         onChange={e => setProductionOrderId(e.target.value)}
+                         placeholder="ixtiyoriy" />
+                </Field>
+
                 <Button variant="primary" size="lg" className="w-full"
                         onClick={doSubmit} disabled={submitting}>
                   <Send className="size-4" />

@@ -51,7 +51,7 @@ class Project(Base):
     per_box:             Mapped[int]      = mapped_column(Integer, nullable=False)
     has_loose:           Mapped[bool]     = mapped_column(Boolean, nullable=False, default=False)
     loose_qty:           Mapped[int]      = mapped_column(Integer, nullable=False, default=0)
-    business_place_id:   Mapped[str]      = mapped_column(Text, nullable=False)
+    business_place_id:   Mapped[str]      = mapped_column(Text, nullable=False, default="")
     production_order_id: Mapped[str]      = mapped_column(Text, nullable=False, default="")
     status:              Mapped[str]      = mapped_column(Text, nullable=False, default="active")
     created_by:          Mapped[Optional[int]] = mapped_column(BigInteger,

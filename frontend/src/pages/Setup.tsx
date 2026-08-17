@@ -19,8 +19,6 @@ export function Setup({ onCreated, onCancel }: Props) {
   const [perBox, setPerBox]                 = useState<number>(240);
   const [hasLoose, setHasLoose]             = useState<boolean>(true);
   const [looseQty, setLooseQty]             = useState<number>(160);
-  const [businessPlaceId, setBusinessPlaceId] = useState("");
-  const [productionOrderId, setProductionOrderId] = useState("");
   const [kmText, setKmText]                 = useState("");
   const [boxText, setBoxText]               = useState("");
   const [busy, setBusy]                     = useState(false);
@@ -63,8 +61,8 @@ export function Setup({ onCreated, onCancel }: Props) {
   }
 
   async function submit() {
-    if (!name.trim() || !productName.trim() || !businessPlaceId.trim()) {
-      push("err", "Loyiha nomi, mahsulot va MOD to'ldirilishi kerak");
+    if (!name.trim() || !productName.trim()) {
+      push("err", "Loyiha nomi va mahsulot to'ldirilishi kerak");
       return;
     }
     setBusy(true);
@@ -73,8 +71,6 @@ export function Setup({ onCreated, onCancel }: Props) {
         name, product_name: productName,
         total_boxes: totalBoxes, per_box: perBox,
         has_loose: hasLoose, loose_qty: hasLoose ? looseQty : 0,
-        business_place_id: businessPlaceId,
-        production_order_id: productionOrderId,
         km_codes_text: kmText, box_codes_text: boxText,
       });
       onCreated(state.project.id);
@@ -113,7 +109,7 @@ export function Setup({ onCreated, onCancel }: Props) {
           </Field>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
           <Field label="Umumiy qutilar soni (loose bilan birga)"
                  hint="masalan 42 — shundan 41 to'liq + 1 loose">
             <Input type="number" min={1} value={totalBoxes}
@@ -123,17 +119,10 @@ export function Setup({ onCreated, onCancel }: Props) {
             <Input type="number" min={1} value={perBox}
                    onChange={e => setPerBox(+e.target.value || 0)} />
           </Field>
-          <Field label="businessPlaceId (MOD)">
-            <Input value={businessPlaceId} onChange={e => setBusinessPlaceId(e.target.value)}
-                   placeholder="masalan 27" />
-          </Field>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4 items-end">
-          <Field label="productionOrderId (ixtiyoriy)">
-            <Input value={productionOrderId} onChange={e => setProductionOrderId(e.target.value)} />
-          </Field>
-          <label className="flex items-center gap-3 h-11 mt-6 md:mt-0">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 items-end">
+          <label className="flex items-center gap-3 h-11">
             <input type="checkbox" className="size-4 accent-[hsl(var(--accent))]"
                    checked={hasLoose} onChange={e => setHasLoose(e.target.checked)} />
             <span className="text-sm">Loose pack bor (oxirgi quti kam to'ldirilgan)</span>
@@ -144,6 +133,11 @@ export function Setup({ onCreated, onCancel }: Props) {
                      onChange={e => setLooseQty(+e.target.value || 0)} />
             </Field>
           )}
+        </div>
+
+        <div className="mt-3 text-xs text-muted">
+          MOD (businessPlaceId), productionOrderId, INN va API kalit — ish
+          tugagach, ASL Belgisi ga yuborish oynasida so'raladi.
         </div>
 
         <div className="mt-4 grid grid-cols-2 md:grid-cols-5 gap-3">

@@ -124,16 +124,38 @@ def _build_document_body(units: list[dict], project: Project) -> str:
 # ── submission (one-click mass aggregation) ─────────────────
 def submit_project(sess: Session, project_id: int, user_id: int,
                    api_key: str | None = None,
+                   business_place_id: str = "",
+                   production_order_id: str = "",
                    sleep_secs: float = RATE_LIMIT_SLEEP_SECS,
                    ) -> dict:
     """Package every closed box into as few reports as the caps allow and POST
     them. Idempotent: claims 'submitting' state atomically, and skips reports
     already recorded as ok=TRUE (safe to restart mid-way).
+
+    MOD (businessPlaceId), productionOrderId, and API key are collected at
+    submit time (not at project creation), so callers pass them here. Any
+    non-empty value is persisted onto the project row so a retry after crash
+    doesn't need to be re-entered.
     """
     settings = get_settings()
     key = api_key or settings.asl_api_key
     if not key:
-        return {"ok": False, "error": "ASL API kaliti sozlanmagan"}
+        return {"ok": False, "error": "ASL API kaliti kiritilmagan"}
+
+    # Persist submit-time overrides onto the project row BEFORE claiming
+    # 'submitting' so the doc-build below reads the final values.
+    project = sess.get(Project, project_id)
+    if project is None:
+        return {"ok": False, "error": "loyiha topilmadi"}
+    bp = (business_place_id or "").strip()
+    if bp:
+        project.business_place_id = bp
+    poid = (production_order_id or "").strip()
+    if poid:
+        project.production_order_id = poid
+    if not project.business_place_id.strip():
+        return {"ok": False, "error": "MOD (businessPlaceId) kiritilmagan"}
+    sess.commit()
 
     # Atomic status claim — plan.md §5 step 3. Allow 'submitting' too so a
     # retry after a crash resumes instead of erroring out.

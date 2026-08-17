@@ -21,7 +21,7 @@ class ProjectCreate(BaseModel):
     per_box: int = Field(gt=0)
     has_loose: bool = False
     loose_qty: int = Field(0, ge=0)
-    business_place_id: str = Field(min_length=1)
+    business_place_id: str = ""
     production_order_id: str = ""
     km_codes_text: str = ""      # newline-separated (raw)
     box_codes_text: str = ""     # newline-separated (raw)
@@ -110,6 +110,9 @@ class ValidateResult(BaseModel):
 
 class SubmitRequest(BaseModel):
     api_key: str | None = None
+    inn: str = ""
+    business_place_id: str = ""
+    production_order_id: str = ""
 
 
 class ReportOut(BaseModel):

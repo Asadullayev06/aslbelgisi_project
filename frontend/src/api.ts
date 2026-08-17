@@ -49,8 +49,9 @@ export const api = {
 
   createProject: (body: {
     name: string; product_name: string; total_boxes: number; per_box: number;
-    has_loose: boolean; loose_qty: number; business_place_id: string;
-    production_order_id: string; km_codes_text: string; box_codes_text: string;
+    has_loose: boolean; loose_qty: number;
+    km_codes_text: string; box_codes_text: string;
+    business_place_id?: string; production_order_id?: string;
   }) => req<ScanState>("/api/projects", { method: "POST", body: JSON.stringify(body) }),
 
   parseFile: async (kind: "km" | "box", file: File) => {
@@ -79,9 +80,17 @@ export const api = {
 
   validate: (projectId: number) =>
     req<ValidateResult>(`/api/projects/${projectId}/validate`, { method: "POST" }),
-  submit: (projectId: number, api_key?: string) =>
+  submit: (projectId: number, body: {
+    api_key?: string; inn?: string;
+    business_place_id?: string; production_order_id?: string;
+  }) =>
     req<SubmitResponse>(`/api/projects/${projectId}/submit`,
-                        { method: "POST", body: JSON.stringify({ api_key: api_key || null }) }),
+                        { method: "POST", body: JSON.stringify({
+                            api_key: body.api_key || null,
+                            inn: body.inn || "",
+                            business_place_id: body.business_place_id || "",
+                            production_order_id: body.production_order_id || "",
+                          }) }),
 
   // GTIN stock (Ostatok)
   stockVerify: (inn: string, api_key: string) =>

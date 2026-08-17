@@ -31,6 +31,8 @@ def submit(project_id: int, body: SubmitRequest,
            u: User = Depends(require_admin)):
     result = asl_client.submit_project(
         sess, project_id, u.id, api_key=body.api_key,
+        business_place_id=body.business_place_id,
+        production_order_id=body.production_order_id,
     )
     if not result.get("ok") and "reports" not in result:
         return SubmitResponse(ok=False, error=result.get("error", ""))

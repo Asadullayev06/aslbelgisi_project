@@ -102,7 +102,7 @@ def create_project(
         per_box=body.per_box,
         has_loose=body.has_loose,
         loose_qty=body.loose_qty if body.has_loose else 0,
-        business_place_id=body.business_place_id.strip(),
+        business_place_id=body.business_place_id.strip(),      # can be empty — set at submit time
         production_order_id=body.production_order_id.strip(),
         status="active",
         created_by=u.id,
