@@ -90,6 +90,7 @@ def build_state(sess: Session, project_id: int, user_id: int) -> ScanState:
         has_loose=project.has_loose, loose_qty=project.loose_qty,
         status=project.status, created_at=project.created_at,
         full_boxes=project.full_boxes, planned_km=project.planned_km,
+        series=project.series or "",
         business_place_id=project.business_place_id,
         production_order_id=project.production_order_id,
     )

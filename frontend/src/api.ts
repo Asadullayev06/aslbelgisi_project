@@ -1,6 +1,6 @@
 import type {
   ProjectSummary, ScanResponse, ScanBatchResponse, ScanEventOut,
-  ScanState, SubmitResponse, ValidateResult,
+  ScanState, SearchResponse, SubmitResponse, ValidateResult,
   StockRegisterResp, StockStatusResp, StockResultResp, StockVerifyResp,
   InspectorLookupResp,
   KmParseResp, SsccParseResp, ModListResp, CustomAggRunResp, CustomAggRunBody,
@@ -75,6 +75,7 @@ export const api = {
   createProject: (body: {
     name: string; product_name: string; total_boxes: number; per_box: number;
     has_loose: boolean; loose_qty: number;
+    series: string;
     km_codes_text: string; box_codes_text: string;
     business_place_id?: string; production_order_id?: string;
   }) => req<ScanState>("/api/projects", { method: "POST", body: JSON.stringify(body) }),
@@ -186,4 +187,20 @@ export const api = {
   customRun: (body: CustomAggRunBody) =>
     req<CustomAggRunResp>("/api/custom-agg/run",
       { method: "POST", body: JSON.stringify(body) }),
+
+  // Kod qidiruv — searches submitted projects only.
+  searchCodes: (codes: string[]) =>
+    req<SearchResponse>("/api/search",
+      { method: "POST", body: JSON.stringify({ codes }) }),
+  /** Same query, delivered as an .xlsx blob. Uses fetch directly because req
+   *  parses JSON and this response is a spreadsheet. */
+  searchExport: async (codes: string[]): Promise<Blob> => {
+    const r = await fetch("/api/search/export", {
+      method: "POST", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ codes }),
+    });
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    return r.blob();
+  },
 };

@@ -83,6 +83,35 @@ export interface ScanBatchResponse {
   state: ScanState;
 }
 
+/** Local code search — submitted projects only. */
+export interface SearchProjectRef {
+  id: number;
+  name: string;
+  product_name: string;
+  series: string;
+}
+export interface SearchBox {
+  sscc: string;
+  is_loose: boolean;
+  closed_at: string;
+}
+export interface SearchRow {
+  raw: string;
+  kind: "km" | "sscc" | "unknown";
+  canonical: string;
+  found: boolean;
+  project: SearchProjectRef | null;
+  box: SearchBox | null;
+  km_status: string | null;
+  km_codes: string[];
+  km_count: number;
+}
+export interface SearchResponse {
+  results: SearchRow[];
+  total: number;
+  found: number;
+}
+
 /** A row of the server-side scan audit log. */
 export interface ScanEventOut {
   id: number;

@@ -53,6 +53,9 @@ class Project(Base):
     loose_qty:           Mapped[int]      = mapped_column(Integer, nullable=False, default=0)
     business_place_id:   Mapped[str]      = mapped_column(Text, nullable=False, default="")
     production_order_id: Mapped[str]      = mapped_column(Text, nullable=False, default="")
+    # Manufacturing batch / seriya — required for new projects, empty on
+    # any project created before the search page shipped.
+    series:              Mapped[str]      = mapped_column(Text, nullable=False, default="")
     status:              Mapped[str]      = mapped_column(Text, nullable=False, default="active")
     created_by:          Mapped[Optional[int]] = mapped_column(BigInteger,
                                                     ForeignKey("users.id", ondelete="SET NULL"),

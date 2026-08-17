@@ -21,6 +21,7 @@ class ProjectCreate(BaseModel):
     per_box: int = Field(gt=0)
     has_loose: bool = False
     loose_qty: int = Field(0, ge=0)
+    series: str = Field(min_length=1)          # manufacturing batch / seriya
     business_place_id: str = ""
     production_order_id: str = ""
     km_codes_text: str = ""      # newline-separated (raw)
@@ -45,6 +46,7 @@ class ProjectPlan(ProjectSummary):
     planned_km: int
     business_place_id: str
     production_order_id: str
+    series: str = ""
 
 
 # ── file parse ──────────────────────────────────────────────

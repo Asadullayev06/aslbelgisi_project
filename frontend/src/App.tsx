@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Boxes, Plus, LogOut, Shield, HardHat, ScanBarcode, Package, ArrowRight, ScanLine, Layers } from "lucide-react";
+import { Boxes, Plus, LogOut, Shield, HardHat, ScanBarcode, Package, ArrowRight, ScanLine, Layers, Search } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHead } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
@@ -9,6 +9,7 @@ import { Login } from "@/pages/Login";
 import { GtinStock } from "@/pages/GtinStock";
 import { Inspector } from "@/pages/Inspector";
 import { CustomAggregation } from "@/pages/CustomAggregation";
+import { CodeSearch } from "@/pages/CodeSearch";
 import { api, setUnauthorizedHandler } from "@/api";
 import { AuthContext, isAdmin, useAuth, type User } from "@/auth";
 import type { ProjectSummary } from "@/types";
@@ -20,7 +21,8 @@ type Route =
   | { kind: "scan"; projectId: number }
   | { kind: "stock" }
   | { kind: "inspector" }
-  | { kind: "custom" };
+  | { kind: "custom" }
+  | { kind: "search" };
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -91,6 +93,9 @@ function Shell({ route, setRoute }: {
   if (route.kind === "custom") {
     return <CustomAggregation onExit={() => setRoute({ kind: "home" })} />;
   }
+  if (route.kind === "search") {
+    return <CodeSearch onExit={() => setRoute({ kind: "home" })} />;
+  }
   if (route.kind === "picker") {
     return <Picker onOpen={id => setRoute({ kind: "scan", projectId: id })}
                    onNew={() => setRoute({ kind: "setup" })}
@@ -99,15 +104,17 @@ function Shell({ route, setRoute }: {
   return <Home onAggregation={() => setRoute({ kind: "picker" })}
                onStock={() => setRoute({ kind: "stock" })}
                onInspector={() => setRoute({ kind: "inspector" })}
-               onCustom={() => setRoute({ kind: "custom" })} />;
+               onCustom={() => setRoute({ kind: "custom" })}
+               onSearch={() => setRoute({ kind: "search" })} />;
 }
 
 
-function Home({ onAggregation, onStock, onInspector, onCustom }: {
+function Home({ onAggregation, onStock, onInspector, onCustom, onSearch }: {
   onAggregation: () => void;
   onStock: () => void;
   onInspector: () => void;
   onCustom: () => void;
+  onSearch: () => void;
 }) {
   return (
     <div className="mx-auto max-w-6xl px-6 py-10">
@@ -141,6 +148,12 @@ function Home({ onAggregation, onStock, onInspector, onCustom }: {
           title="Custom Aggregation"
           subtitle="CSV yuklab, guruhlarga bo'lib, bir bosishda ASL ga yuborish"
           onClick={onCustom}
+        />
+        <ToolCard
+          icon={<Search className="size-8 text-accent" />}
+          title="Kod Qidiruv"
+          subtitle="Ichki bazadan KM/quti kodini qidirish · Excel yuklab olish"
+          onClick={onSearch}
         />
       </div>
     </div>

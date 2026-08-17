@@ -19,6 +19,7 @@ export function Setup({ onCreated, onCancel }: Props) {
   const [perBox, setPerBox]                 = useState<number>(240);
   const [hasLoose, setHasLoose]             = useState<boolean>(true);
   const [looseQty, setLooseQty]             = useState<number>(160);
+  const [series, setSeries]                 = useState("");
   const [kmText, setKmText]                 = useState("");
   const [boxText, setBoxText]               = useState("");
   const [busy, setBusy]                     = useState(false);
@@ -65,12 +66,17 @@ export function Setup({ onCreated, onCancel }: Props) {
       push("err", "Loyiha nomi va mahsulot to'ldirilishi kerak");
       return;
     }
+    if (!series.trim()) {
+      push("err", "Seriya (batch) kiritilishi shart");
+      return;
+    }
     setBusy(true);
     try {
       const state = await api.createProject({
         name, product_name: productName,
         total_boxes: totalBoxes, per_box: perBox,
         has_loose: hasLoose, loose_qty: hasLoose ? looseQty : 0,
+        series: series.trim(),
         km_codes_text: kmText, box_codes_text: boxText,
       });
       onCreated(state.project.id);
@@ -106,6 +112,14 @@ export function Setup({ onCreated, onCancel }: Props) {
           <Field label="Mahsulot nomi">
             <Input value={productName} onChange={e => setProductName(e.target.value)}
                    placeholder="masalan: Salbucort 250mg" />
+          </Field>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+          <Field label="Seriya (batch) *"
+                 hint="ishlab chiqarish partiyasi — Kod Qidiruv sahifasida ko'rinadi">
+            <Input value={series} onChange={e => setSeries(e.target.value)}
+                   placeholder="masalan: L2026-05-A" />
           </Field>
         </div>
 

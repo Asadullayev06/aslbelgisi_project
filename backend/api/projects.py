@@ -95,6 +95,9 @@ def create_project(
     if errors:
         raise HTTPException(400, "  ·  ".join(errors))
 
+    if not body.series.strip():
+        raise HTTPException(400, "seriya kiritilishi shart")
+
     project = Project(
         name=body.name.strip(),
         product_name=body.product_name.strip(),
@@ -102,6 +105,7 @@ def create_project(
         per_box=body.per_box,
         has_loose=body.has_loose,
         loose_qty=body.loose_qty if body.has_loose else 0,
+        series=body.series.strip(),
         business_place_id=body.business_place_id.strip(),      # can be empty — set at submit time
         production_order_id=body.production_order_id.strip(),
         status="active",
