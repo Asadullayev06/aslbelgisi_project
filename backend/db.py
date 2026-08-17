@@ -31,8 +31,13 @@ def _make_engine():
     connect_args = {"prepare_threshold": None}
     return create_engine(
         _psycopg3_url(settings.database_url),
-        pool_size=5,
-        max_overflow=5,
+        # Scanning is bursty: two operators firing a barcode gun can put a
+        # dozen requests in flight at once. A 5+5 pool made those queue behind
+        # each other and, once pool_timeout elapsed, the scan was lost.
+        pool_size=20,
+        max_overflow=20,
+        pool_timeout=30,
+        pool_recycle=300,       # Neon drops idle conns; recycle before it does
         pool_pre_ping=True,
         connect_args=connect_args,
         future=True,

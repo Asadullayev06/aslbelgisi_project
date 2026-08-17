@@ -41,15 +41,40 @@ export function Scan({ projectId, onExit }: Props) {
   const { flashes, push, dismiss } = useFlashes();
   const scannerRef = useRef<ScanInputHandle>(null);
 
+  // ── scan queue ────────────────────────────────────────────
+  // A barcode gun fires faster than the round-trip to Neon. Previously each
+  // Enter started its own fetch: responses raced, the last one to land won,
+  // and any request that failed took its barcode with it. Now every scan goes
+  // into a FIFO that is drained strictly one at a time, with retries, and a
+  // code is only dropped from the queue once the server has ruled on it.
+  const queueRef    = useRef<string[]>([]);
+  const drainingRef = useRef(false);
+  const lastAppliedRef = useRef(0);          // when we last applied scan state
+  const [queued, setQueued]   = useState(0);
+  const [rejects, setRejects] = useState<{ code: string; reason: string }[]>([]);
+
+  /** Apply state that came from a write. Stamps the clock so an in-flight
+   *  poll started earlier can't land afterwards and undo it. */
+  const applyState = useCallback((s: ScanState) => {
+    setState(s);
+    lastAppliedRef.current = Date.now();
+  }, []);
+
   // Initial load + live polling. Polling refreshes counters, closed-box list,
   // and other operators' work without touching the scan input's DOM element
   // (React reconciles by key; the input keeps its focus).
   useEffect(() => {
     let alive = true;
-    const load = () =>
+    const load = (force = false) => {
+      // While the queue is draining, scan replies are the freshest truth and
+      // a poll would only add contention — and could land with a stale count.
+      if (!force && drainingRef.current) return;
+      const startedAt = Date.now();
       api.getProject(projectId)
         .then(s => {
           if (!alive) return;
+          // Discard a poll that a scan overtook while it was in flight.
+          if (!force && lastAppliedRef.current > startedAt) return;
           setState(s);
           // Prefill submit credentials from whatever was saved to the project
           // (e.g. a prior submit attempt). Only fill if the field is empty
@@ -58,31 +83,79 @@ export function Scan({ projectId, onExit }: Props) {
           setProductionOrderId(v => v || s.project.production_order_id || "");
         })
         .catch(e => { if (alive) setLoadingErr(String(e)); });
-    load();
-    const t = setInterval(load, 2000);
+    };
+    load(true);
+    const t = setInterval(() => load(), 2000);
     return () => { alive = false; clearInterval(t); };
   }, [projectId]);
 
   const boxFull = !!state && state.current_codes.length >= state.current_capacity;
   const looseMode = !!state && state.current_is_loose;
 
-  const handleScan = useCallback(async (raw: string) => {
+  // Explicit type: the body references `drain` at the end, and without an
+  // annotation TS can't infer a self-referential initializer.
+  const drain = useCallback<() => Promise<void>>(async () => {
+    if (drainingRef.current) return;
+    drainingRef.current = true;
     try {
-      const res = await api.scan(projectId, raw);
-      setState(res.state);
-      push(res.level, res.message);
-      // After every scan the input naturally lands empty; but re-pull focus
-      // in case a click stole it a moment earlier.
+      while (queueRef.current.length) {
+        const code = queueRef.current[0];
+        let settled = false;
+
+        // Up to 4 tries. `attempt` tells the server that an identical code
+        // already sitting in our own open box is a redelivery, not a dupe —
+        // so a retry after a dropped response can't produce a false error.
+        for (let attempt = 1; attempt <= 4 && !settled; attempt++) {
+          try {
+            const res = await api.scan(projectId, code, attempt);
+            applyState(res.state);
+            push(res.level, res.message);
+            if (res.level !== "hit") {
+              setRejects(r => [{ code, reason: res.message }, ...r].slice(0, 500));
+            }
+            settled = true;
+          } catch (e: any) {
+            const status = e?.status as number | undefined;
+            // 4xx is the server's verdict — retrying won't change it.
+            if (status && status >= 400 && status < 500) {
+              push("err", String(e.message || e));
+              setRejects(r => [{ code, reason: String(e.message || e) }, ...r].slice(0, 500));
+              settled = true;
+            } else if (attempt === 4) {
+              const reason = `ulanish xatosi: ${String(e?.message || e)}`;
+              push("err", reason);
+              setRejects(r => [{ code, reason }, ...r].slice(0, 500));
+              settled = true;
+            } else {
+              await new Promise(r => setTimeout(r, 250 * attempt));
+            }
+          }
+        }
+
+        queueRef.current.shift();
+        setQueued(queueRef.current.length);
+      }
+    } finally {
+      drainingRef.current = false;
       scannerRef.current?.focus();
-    } catch (e: any) {
-      push("err", String(e.message || e));
     }
-  }, [projectId, push]);
+    // Belt and braces: if anything slipped in as we were closing down, keep
+    // going. Nothing may be left sitting in the queue unsent.
+    if (queueRef.current.length) void drain();
+  }, [projectId, push, applyState]);
+
+  // Called synchronously on every Enter — never awaits, so the gun can keep
+  // firing while earlier codes are still in flight.
+  const handleScan = useCallback((raw: string) => {
+    queueRef.current.push(raw);
+    setQueued(queueRef.current.length);
+    void drain();
+  }, [drain]);
 
   async function doUndo() {
     try {
       const r = await api.undo(projectId);
-      setState(r.state); push(r.level, r.message);
+      applyState(r.state); push(r.level, r.message);
     } catch (e: any) { push("err", String(e.message || e)); }
     scannerRef.current?.focus();
   }
@@ -90,14 +163,14 @@ export function Scan({ projectId, onExit }: Props) {
     if (!confirm("Joriy qutini tozalash — bunda kodlar ro'yxatga qaytadi. Davom etamizmi?")) return;
     try {
       const r = await api.discard(projectId);
-      setState(r.state); push(r.level, r.message);
+      applyState(r.state); push(r.level, r.message);
     } catch (e: any) { push("err", String(e.message || e)); }
     scannerRef.current?.focus();
   }
   async function toggleLoose(on: boolean) {
     try {
       const r = await api.setLooseMode(projectId, on);
-      setState(r.state); push(r.level, r.message);
+      applyState(r.state); push(r.level, r.message);
     } catch (e: any) { push("err", String(e.message || e)); }
     scannerRef.current?.focus();
   }
@@ -105,7 +178,7 @@ export function Scan({ projectId, onExit }: Props) {
     if (!confirm("Bu qutini bekor qilamizmi? Uning kodlari ro'yxatga qaytariladi.")) return;
     try {
       const r = await api.deleteBox(projectId, id);
-      setState(r.state); push(r.level, r.message);
+      applyState(r.state); push(r.level, r.message);
     } catch (e: any) { push("err", String(e.message || e)); }
   }
 
@@ -287,6 +360,11 @@ export function Scan({ projectId, onExit }: Props) {
                   {state.current_codes.length}
                 </span>
                 <span className="text-muted"> / {state.current_capacity}</span>
+                {queued > 0 && (
+                  <span className="ml-2 text-base font-semibold text-warning">
+                    +{queued} navbatda…
+                  </span>
+                )}
               </div>
               <div className={`text-sm ${boxFull ? "text-warning font-semibold" : "text-muted"}`}>
                 {boxFull ? "To'ldirildi — quti kodini skanerlang"
@@ -327,6 +405,37 @@ export function Scan({ projectId, onExit }: Props) {
               </Button>
             </div>
           </Card>
+
+          {/* Rejected scans — persistent. A toast disappears in a couple of
+              seconds and an operator working at speed will never see it; this
+              list is the record of every barcode the system did NOT accept. */}
+          {rejects.length > 0 && (
+            <Card>
+              <CardHead
+                title="Qabul qilinmagan skanerlar"
+                right={
+                  <>
+                    <Badge tone="danger">{rejects.length}</Badge>
+                    <Button variant="outline" size="sm" onClick={() => setRejects([])}>
+                      Tozalash
+                    </Button>
+                  </>
+                }
+              />
+              <div className="text-sm text-muted mb-2">
+                Bu kodlar bazaga tushmadi. Sababini ko'ring va kerak bo'lsa qayta skanerlang.
+              </div>
+              <div className="max-h-56 overflow-auto space-y-1">
+                {rejects.map((r, i) => (
+                  <div key={`${r.code}-${i}`}
+                       className="rounded-lg border border-danger/30 bg-danger/5 px-2 py-1.5">
+                    <div className="font-mono text-xs break-all">{r.code}</div>
+                    <div className="text-xs text-danger mt-0.5">{r.reason}</div>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
 
           <MissingPanel
             title="Skanerlanmagan KM kodlar"

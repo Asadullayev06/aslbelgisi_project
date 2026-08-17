@@ -25,7 +25,9 @@ async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
       const j = await res.json();
       if (j.detail) msg = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail);
     } catch { /* ignore */ }
-    throw new Error(msg);
+    // Carry the status so callers can tell a retryable server/network fault
+    // (5xx) from a decision the server actually made (4xx).
+    throw Object.assign(new Error(msg), { status: res.status });
   }
   if (res.status === 204) return undefined as unknown as T;
   return (await res.json()) as T;
@@ -63,9 +65,9 @@ export const api = {
     return (await r.json()) as { kind: string; codes: string[]; warnings: string[]; count: number };
   },
 
-  scan: (projectId: number, code: string) =>
+  scan: (projectId: number, code: string, attempt = 1) =>
     req<ScanResponse>(`/api/projects/${projectId}/scan`,
-                      { method: "POST", body: JSON.stringify({ code }) }),
+                      { method: "POST", body: JSON.stringify({ code, attempt }) }),
   undo: (projectId: number) =>
     req<ScanResponse>(`/api/projects/${projectId}/undo`, { method: "POST" }),
   discard: (projectId: number) =>

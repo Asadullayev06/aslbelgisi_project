@@ -88,6 +88,9 @@ class ScanState(BaseModel):
 
 class ScanRequest(BaseModel):
     code: str
+    # >1 when the client is re-sending after a network failure. Lets the
+    # server treat "already in your own open box" as success, not a duplicate.
+    attempt: int = 1
 
 
 class ScanResponse(BaseModel):

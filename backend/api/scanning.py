@@ -37,7 +37,8 @@ def scan(project_id: int, body: ScanRequest,
     if not body.code.strip():
         raise HTTPException(400, "code required")
     try:
-        res = scanning.scan_code(sess, project_id, u.id, body.code)
+        res = scanning.scan_code(sess, project_id, u.id, body.code,
+                                 attempt=body.attempt)
     except ValueError as e:
         res = {"level": "err", "message": str(e)}
     return _wrap(res, sess, project_id, u.id)

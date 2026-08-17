@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import and_, delete, func, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -29,16 +30,39 @@ def _warn(msg: str, **extra) -> dict: return {"level": "warn", "message": msg, *
 
 
 # ── open-box helpers ────────────────────────────────────────
-def _get_or_create_open_box(sess: Session, project_id: int, user_id: int) -> OpenBox:
-    ob = sess.execute(
-        select(OpenBox).where(OpenBox.project_id == project_id,
-                              OpenBox.user_id    == user_id)
-    ).scalar_one_or_none()
-    if ob:
-        return ob
-    ob = OpenBox(project_id=project_id, user_id=user_id, is_loose=False)
-    sess.add(ob)
-    sess.flush()
+def _get_or_create_open_box(sess: Session, project_id: int, user_id: int,
+                            lock: bool = False) -> OpenBox:
+    """Get the operator's open box, creating it atomically if absent.
+
+    RACE THIS FIXES: the old read-then-INSERT lost scans. Right after a box
+    closed (the open_boxes row is deleted) two fast scans would both find
+    nothing and both INSERT, one hit uq_open_boxes_project_user, the request
+    500'd, and that barcode was silently gone. ON CONFLICT DO NOTHING makes
+    the create idempotent.
+
+    With `lock=True` the row is taken FOR UPDATE so the capacity check and the
+    KM claim in _scan_km are one atomic step — two guns firing into the same
+    box can no longer both read the same count.
+    """
+    sess.execute(
+        pg_insert(OpenBox)
+        .values(project_id=project_id, user_id=user_id, is_loose=False)
+        .on_conflict_do_nothing(index_elements=["project_id", "user_id"])
+    )
+    q = (select(OpenBox)
+         .where(OpenBox.project_id == project_id, OpenBox.user_id == user_id)
+         .execution_options(populate_existing=True))   # never trust the identity map
+    if lock:
+        q = q.with_for_update()
+    ob = sess.execute(q).scalar_one_or_none()
+    if ob is None:
+        # Concurrent delete between our insert and select — try once more.
+        sess.execute(
+            pg_insert(OpenBox)
+            .values(project_id=project_id, user_id=user_id, is_loose=False)
+            .on_conflict_do_nothing(index_elements=["project_id", "user_id"])
+        )
+        ob = sess.execute(q).scalar_one()
     return ob
 
 
@@ -59,26 +83,35 @@ def _plan_full_boxes(project: Project) -> int:
 # ═════════════════════════════════════════════════════════════
 # KM scan
 # ═════════════════════════════════════════════════════════════
-def scan_code(sess: Session, project_id: int, user_id: int, raw: str) -> dict:
+def scan_code(sess: Session, project_id: int, user_id: int, raw: str,
+              attempt: int = 1) -> dict:
     """Route a raw scanner input to the right handler.
 
     We accept any code and dispatch based on shape (KM vs SSCC), so the
     operator only needs one input field.
+
+    `attempt` > 1 means the client is re-sending after a network failure. The
+    first try may well have committed before the connection dropped, so a code
+    already sitting in this operator's own open box counts as success instead
+    of a duplicate error — that makes client-side retries safe.
     """
     kind = classify_scan(raw)
     if kind == "unknown":
         return _err(f"tanib bo'lmadigan skaner: {raw[:40]}")
     if kind == "km":
-        return _scan_km(sess, project_id, user_id, canonical_km(raw))
+        return _scan_km(sess, project_id, user_id, canonical_km(raw), attempt)
     return _scan_sscc(sess, project_id, user_id, normalize_sscc(raw))
 
 
-def _scan_km(sess: Session, project_id: int, user_id: int, km: str) -> dict:
+def _scan_km(sess: Session, project_id: int, user_id: int, km: str,
+             attempt: int = 1) -> dict:
     project = sess.get(Project, project_id)
     if not project or project.status != "active":
         return _err("loyiha faol emas")
 
-    ob = _get_or_create_open_box(sess, project_id, user_id)
+    # FOR UPDATE: serialize this operator's own scans so the capacity check
+    # below and the claim underneath it cannot interleave.
+    ob = _get_or_create_open_box(sess, project_id, user_id, lock=True)
     cap = _effective_capacity(project, ob)
     now_count = _open_box_count(sess, ob.id)
 
@@ -107,7 +140,8 @@ def _scan_km(sess: Session, project_id: int, user_id: int, km: str) -> dict:
 
     # Zero rows — figure out why (name WHICH operator got it, plan.md §4.1).
     row = sess.execute(
-        select(KmPool.status, KmPool.claimed_by, User.username, Box.sscc)
+        select(KmPool.status, KmPool.claimed_by, KmPool.open_box_id,
+               User.username, Box.sscc)
         .select_from(KmPool)
         .join(User, User.id == KmPool.claimed_by, isouter=True)
         .join(Box,  Box.id  == KmPool.box_id,     isouter=True)
@@ -115,12 +149,18 @@ def _scan_km(sess: Session, project_id: int, user_id: int, km: str) -> dict:
     ).one_or_none()
     if row is None:
         return _err(f"ro'yxatda yo'q kod: {km}")
-    status, claimed_by, other_name, box_sscc = row
+    status, claimed_by, open_box_id, other_name, box_sscc = row
     if status == "aggregated":
         tail = f" ({box_sscc})" if box_sscc else ""
         return _err(f"boshqa qutida ishlatilgan{tail}: {km}")
     # status == 'claimed'
     if claimed_by == user_id:
+        if attempt > 1 and open_box_id == ob.id:
+            # Our own earlier attempt did land; the reply just never made it
+            # back. Report success so the retry is a no-op, not a false error.
+            return _hit(f"qabul qilindi ({now_count}/{cap})  ·  {km}",
+                        current=now_count, capacity=cap, kind="km", code=km,
+                        deduped=True)
         return _err(f"joriy qutingizda takroriy: {km}")
     who = other_name or f"user#{claimed_by}"
     return _err(f"⚠ {who} hozir skanerladi: {km}")
@@ -134,9 +174,13 @@ def _scan_sscc(sess: Session, project_id: int, user_id: int, sscc: str) -> dict:
     if not project or project.status != "active":
         return _err("loyiha faol emas")
 
+    # Lock order is always projects → open_boxes (see _scan_km), so a KM scan
+    # and a box-close racing each other can't deadlock.
     ob = sess.execute(
-        select(OpenBox).where(OpenBox.project_id == project_id,
-                              OpenBox.user_id == user_id)
+        select(OpenBox)
+        .where(OpenBox.project_id == project_id, OpenBox.user_id == user_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
     ).scalar_one_or_none()
     if ob is None:
         return _err("quti bo'sh - avval KM larni skanerlang")
@@ -266,7 +310,7 @@ def set_loose_mode(sess: Session, project_id: int, user_id: int, on: bool) -> di
     if on and loose_already:
         return _err("loose quti allaqachon yopilgan")
 
-    ob = _get_or_create_open_box(sess, project_id, user_id)
+    ob = _get_or_create_open_box(sess, project_id, user_id, lock=True)
     if _open_box_count(sess, ob.id) > 0:
         return _err("avval joriy qutini yoping yoki tozalang")
     ob.is_loose = bool(on)

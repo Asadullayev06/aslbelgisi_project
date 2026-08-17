@@ -15,18 +15,27 @@ def build_state(sess: Session, project_id: int, user_id: int) -> ScanState:
     if project is None:
         raise LookupError("project not found")
 
-    total_km      = int(sess.execute(select(func.count(KmPool.id)).where(KmPool.project_id == project_id)).scalar_one())
-    aggregated_km = int(sess.execute(select(func.count(KmPool.id)).where(KmPool.project_id == project_id, KmPool.status == "aggregated")).scalar_one())
-    claimed_km    = int(sess.execute(select(func.count(KmPool.id)).where(KmPool.project_id == project_id, KmPool.status == "claimed")).scalar_one())
-    pending_km    = total_km - aggregated_km - claimed_km
+    # One grouped query instead of three. build_state runs on EVERY scan, and
+    # each extra round-trip to Neon is latency the barcode gun has to wait on.
+    km_by_status = dict(sess.execute(
+        select(KmPool.status, func.count(KmPool.id))
+        .where(KmPool.project_id == project_id)
+        .group_by(KmPool.status)
+    ).all())
+    aggregated_km = int(km_by_status.get("aggregated", 0))
+    claimed_km    = int(km_by_status.get("claimed", 0))
+    pending_km    = int(km_by_status.get("pending", 0))
+    total_km      = aggregated_km + claimed_km + pending_km
     scanned_km    = aggregated_km + claimed_km
 
-    full_closed = int(sess.execute(
-        select(func.count(Box.id)).where(Box.project_id == project_id, Box.is_loose == False)  # noqa: E712
-    ).scalar_one())
-    loose_closed = int(sess.execute(
-        select(func.count(Box.id)).where(Box.project_id == project_id, Box.is_loose == True)   # noqa: E712
-    ).scalar_one()) > 0
+    # Likewise: one query covers both box buckets.
+    box_by_kind = dict(sess.execute(
+        select(Box.is_loose, func.count(Box.id))
+        .where(Box.project_id == project_id)
+        .group_by(Box.is_loose)
+    ).all())
+    full_closed  = int(box_by_kind.get(False, 0))
+    loose_closed = int(box_by_kind.get(True, 0)) > 0
 
     box_rows = list(sess.execute(
         select(Box, func.count(KmPool.id))
