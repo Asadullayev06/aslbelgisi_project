@@ -265,7 +265,6 @@ def _claim_km_run(sess: Session, project: Project, user_id: int, ob: OpenBox,
     # code that is already sitting in this box is a duplicate (or a retry of
     # one that landed), and calling that "box full" would send the operator
     # off to rescan something the system already has.
-    no_room = {km for (_, _, km) in todo[pos:]}
     failed.extend(todo[pos:])
 
     if not failed:

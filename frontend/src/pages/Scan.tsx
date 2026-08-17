@@ -25,6 +25,20 @@ interface Props {
 
 /** Must not exceed the server's MAX_BATCH. */
 const MAX_BATCH = 200;
+/** Retry budget for one batch. Time spent knowingly offline does NOT consume
+ *  it — only real attempts do, so a long dead spot costs nothing. */
+const MAX_ATTEMPTS = 40;
+/** Absolute ceiling on holding a batch before giving up and listing it. */
+const MAX_HOLD_MS = 30 * 60 * 1000;
+
+/** One queued scan. `recovered` marks codes restored from storage after a
+ *  reload or crash — they may already have reached the server, so they are
+ *  re-sent as attempt>1 and a code already in the box reads as success. */
+type QItem = { code: string; recovered?: boolean };
+
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+/** 0.5s, 1s, 2s, 4s, 8s, then hold at 10s. */
+const backoffMs = (attempt: number) => Math.min(500 * 2 ** (attempt - 1), 10000);
 
 export function Scan({ projectId, onExit }: Props) {
   const { user } = useAuth();
@@ -50,10 +64,15 @@ export function Scan({ projectId, onExit }: Props) {
   // and any request that failed took its barcode with it. Now every scan goes
   // into a FIFO that is drained strictly one at a time, with retries, and a
   // code is only dropped from the queue once the server has ruled on it.
-  const queueRef    = useRef<string[]>([]);
+  const queueRef    = useRef<QItem[]>([]);
   const drainingRef = useRef(false);
-  const lastAppliedRef = useRef(0);          // when we last applied scan state
+  // Seeded to "now" so a freshly opened page counts as active and polls
+  // briskly for the first 30s rather than starting out in the idle cadence.
+  const lastAppliedRef = useRef(Date.now());
   const [queued, setQueued]   = useState(0);
+  const [online, setOnline]   = useState(() =>
+    typeof navigator === "undefined" ? true : navigator.onLine);
+  const [stalled, setStalled] = useState(false);   // retrying, link is unhappy
   const [rejects, setRejects] = useState<{ code: string; reason: string }[]>([]);
   // Server-side audit log: survives reload and covers BOTH operators, so a
   // "I scanned 150 but it says 148" question always has an answer.
@@ -66,6 +85,22 @@ export function Scan({ projectId, onExit }: Props) {
     setState(s);
     lastAppliedRef.current = Date.now();
   }, []);
+
+  // ── queue durability ──────────────────────────────────────
+  // Scoped per project AND user: warehouse tablets get shared, and one
+  // operator must never inherit another's unsent codes.
+  const storageKey = `mav2.scanq.${projectId}.${user?.id ?? "anon"}`;
+
+  const persistQueue = useCallback(() => {
+    try {
+      const codes = queueRef.current.map(i => i.code);
+      if (codes.length) localStorage.setItem(storageKey, JSON.stringify(codes));
+      else localStorage.removeItem(storageKey);
+    } catch {
+      // Storage disabled or full — the in-memory queue still works, we just
+      // lose the crash safety net. Not worth interrupting the operator.
+    }
+  }, [storageKey]);
 
   // Queued codes live only in memory. The window is small (a batch drains in
   // well under a second) but closing the tab mid-drain would lose them, so
@@ -83,10 +118,13 @@ export function Scan({ projectId, onExit }: Props) {
   // (React reconciles by key; the input keeps its focus).
   useEffect(() => {
     let alive = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const load = (force = false) => {
       // While the queue is draining, scan replies are the freshest truth and
       // a poll would only add contention — and could land with a stale count.
       if (!force && drainingRef.current) return;
+      // No point burning a request (and a long timeout) with no link.
+      if (!force && typeof navigator !== "undefined" && !navigator.onLine) return;
       const startedAt = Date.now();
       api.getProject(projectId)
         .then(s => {
@@ -102,9 +140,34 @@ export function Scan({ projectId, onExit }: Props) {
         })
         .catch(e => { if (alive) setLoadingErr(String(e)); });
     };
+
+    // Adaptive interval. This response carries the whole closed-box list, so
+    // on a 190-box project a fixed 2s poll is ~25KB/s per operator of pure
+    // background chatter — enough to matter on warehouse wifi. Poll briskly
+    // while work is happening, back off when idle, crawl when hidden.
+    const nextDelay = () => {
+      if (typeof document !== "undefined" && document.hidden) return 30000;
+      const idleFor = Date.now() - lastAppliedRef.current;
+      return idleFor > 30000 ? 8000 : 2000;
+    };
+    const tick = () => {
+      timer = setTimeout(() => {
+        if (!alive) return;
+        load();
+        tick();
+      }, nextDelay());
+    };
+
     load(true);
-    const t = setInterval(() => load(), 2000);
-    return () => { alive = false; clearInterval(t); };
+    tick();
+    // Coming back to the tab should feel instant, not up to 30s stale.
+    const onVisible = () => { if (!document.hidden) load(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      alive = false;
+      if (timer) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [projectId]);
 
   const boxFull = !!state && state.current_codes.length >= state.current_capacity;
@@ -120,16 +183,45 @@ export function Scan({ projectId, onExit }: Props) {
         // Take everything waiting, not one code. A round-trip to Neon costs
         // ~80ms whether it carries 1 code or 100, so the faster the operator
         // scans the bigger the batch gets and the queue self-levels.
-        const batch = queueRef.current.slice(0, MAX_BATCH);
+        // Restored codes are kept in their own batch so the whole batch can
+        // carry attempt>1 without making fresh double-scans look accepted.
+        const head = queueRef.current[0];
+        const isRecovered = !!head.recovered;
+        const items: QItem[] = [];
+        for (const it of queueRef.current) {
+          if (!!it.recovered !== isRecovered || items.length >= MAX_BATCH) break;
+          items.push(it);
+        }
+        const batch = items.map(i => i.code);
+
         let settled = false;
+        let attempt = 0;
+        const startedAt = Date.now();
 
         // `attempt` tells the server that a code already sitting in our own
         // open box is a redelivery, not a duplicate — so retrying after a
         // dropped response can't produce a false error.
-        for (let attempt = 1; attempt <= 4 && !settled; attempt++) {
+        while (!settled) {
+          // Known-offline: hold without burning the retry budget. Codes stay
+          // queued and the operator can keep scanning into the queue.
+          if (typeof navigator !== "undefined" && !navigator.onLine) {
+            if (Date.now() - startedAt > MAX_HOLD_MS) {
+              const reason = "ulanish yo'q — juda uzoq kutildi";
+              push("err", reason);
+              setRejects(r => [...batch.map(c => ({ code: c, reason })), ...r].slice(0, 500));
+              break;
+            }
+            setStalled(true);
+            await sleep(1000);
+            continue;
+          }
+
+          attempt++;
           try {
-            const res = await api.scanBatch(projectId, batch, attempt);
+            const res = await api.scanBatch(
+              projectId, batch, isRecovered ? Math.max(2, attempt) : attempt);
             applyState(res.state);
+            setStalled(false);
             const bad = res.results.filter(r => r.level !== "hit");
             if (bad.length) {
               setRejects(r => [
@@ -152,36 +244,74 @@ export function Scan({ projectId, onExit }: Props) {
               const reason = String(e.message || e);
               push("err", reason);
               setRejects(r => [...batch.map(c => ({ code: c, reason })), ...r].slice(0, 500));
+              setStalled(false);
               settled = true;
-            } else if (attempt === 4) {
+            } else if (attempt >= MAX_ATTEMPTS || Date.now() - startedAt > MAX_HOLD_MS) {
               const reason = `ulanish xatosi: ${String(e?.message || e)}`;
               push("err", reason);
               setRejects(r => [...batch.map(c => ({ code: c, reason })), ...r].slice(0, 500));
+              setStalled(false);
               settled = true;
             } else {
-              await new Promise(r => setTimeout(r, 250 * attempt));
+              setStalled(true);
+              await sleep(backoffMs(attempt));
             }
           }
         }
 
-        queueRef.current.splice(0, batch.length);
+        queueRef.current.splice(0, items.length);
         setQueued(queueRef.current.length);
+        persistQueue();
       }
     } finally {
       drainingRef.current = false;
+      setStalled(false);
       scannerRef.current?.focus();
     }
     // Belt and braces: if anything slipped in as we were closing down, keep
     // going. Nothing may be left sitting in the queue unsent.
     if (queueRef.current.length) void drain();
-  }, [projectId, push, applyState]);
+  }, [projectId, push, applyState, persistQueue]);
 
   // Called synchronously on every Enter — never awaits, so the gun can keep
   // firing while earlier codes are still in flight.
   const handleScan = useCallback((raw: string) => {
-    queueRef.current.push(raw);
+    queueRef.current.push({ code: raw });
     setQueued(queueRef.current.length);
+    persistQueue();          // survives a reload/crash before it's delivered
     void drain();
+  }, [drain, persistQueue]);
+
+  // Restore anything a previous session left undelivered, once per project.
+  const restoredRef = useRef("");
+  useEffect(() => {
+    if (restoredRef.current === storageKey) return;
+    restoredRef.current = storageKey;
+    let codes: string[] = [];
+    try {
+      codes = JSON.parse(localStorage.getItem(storageKey) || "[]");
+    } catch { codes = []; }
+    if (!Array.isArray(codes) || !codes.length) return;
+    queueRef.current = [
+      ...codes.map(c => ({ code: String(c), recovered: true })),
+      ...queueRef.current,
+    ];
+    setQueued(queueRef.current.length);
+    push("warn", `${codes.length} ta yuborilmagan skaner tiklandi — yuborilmoqda`);
+    void drain();
+  }, [storageKey, drain, push]);
+
+  // Coming back online: start draining immediately rather than waiting for
+  // the current backoff to expire.
+  useEffect(() => {
+    const goOnline  = () => { setOnline(true); void drain(); };
+    const goOffline = () => setOnline(false);
+    window.addEventListener("online", goOnline);
+    window.addEventListener("offline", goOffline);
+    return () => {
+      window.removeEventListener("online", goOnline);
+      window.removeEventListener("offline", goOffline);
+    };
   }, [drain]);
 
   async function loadHistory() {
@@ -318,6 +448,24 @@ export function Scan({ projectId, onExit }: Props) {
           </div>
         </div>
       </div>
+
+      {/* Connection banner. Scanning keeps working while this is up — codes
+          are held locally and delivered when the link returns. */}
+      {(!online || stalled) && (
+        <div className="mb-4 rounded-xl border border-warning/50 bg-warning/10 px-4 py-3
+                        flex items-center gap-3">
+          <AlertTriangle className="size-5 text-warning shrink-0" />
+          <div className="text-sm">
+            <div className="font-semibold text-warning">
+              {online ? "Ulanish sekin — qayta urinilmoqda" : "Internet yo'q"}
+            </div>
+            <div className="text-muted">
+              Skanerlashda davom eting. {queued > 0 ? `${queued} ta kod` : "Kodlar"} saqlanmoqda
+              va ulanish tiklanganda avtomatik yuboriladi.
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Top status card */}
       <Card className="mb-4">

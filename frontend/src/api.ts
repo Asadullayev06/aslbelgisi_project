@@ -11,12 +11,34 @@ import type {
 let onUnauthorized: (() => void) | null = null;
 export function setUnauthorizedHandler(fn: () => void) { onUnauthorized = fn; }
 
-async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const res = await fetch(path, {
-    credentials: "include",   // send/receive the auth cookie
-    headers: { "Content-Type": "application/json", ...(init.headers || {}) },
-    ...init,
-  });
+/** `timeoutMs` is opt-in per call. Do NOT make it a global default: the ASL
+ *  submit legitimately runs for minutes on a large project. */
+async function req<T>(path: string, init: RequestInit = {},
+                      timeoutMs?: number): Promise<T> {
+  let ctl: AbortController | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  if (timeoutMs) {
+    ctl = new AbortController();
+    timer = setTimeout(() => ctl!.abort(), timeoutMs);
+  }
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      credentials: "include",   // send/receive the auth cookie
+      headers: { "Content-Type": "application/json", ...(init.headers || {}) },
+      ...init,
+      ...(ctl ? { signal: ctl.signal } : {}),
+    });
+  } catch (e: any) {
+    // An abort on a weak link is a transient fault — mark it retryable so the
+    // scan queue treats it like any other network blip.
+    if (e?.name === "AbortError") {
+      throw Object.assign(new Error("javob kelmadi (timeout)"), { status: 0 });
+    }
+    throw e;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
   if (res.status === 401 && !path.startsWith("/api/auth/")) {
     onUnauthorized?.();
   }
@@ -69,10 +91,13 @@ export const api = {
   scan: (projectId: number, code: string, attempt = 1) =>
     req<ScanResponse>(`/api/projects/${projectId}/scan`,
                       { method: "POST", body: JSON.stringify({ code, attempt }) }),
-  /** Whole burst in one round-trip — see the queue in Scan.tsx. */
-  scanBatch: (projectId: number, codes: string[], attempt = 1) =>
+  /** Whole burst in one round-trip — see the queue in Scan.tsx.
+   *  Timed out so a half-open connection fails fast and gets retried instead
+   *  of hanging the queue; re-delivery is safe because of `attempt`. */
+  scanBatch: (projectId: number, codes: string[], attempt = 1, timeoutMs = 20000) =>
     req<ScanBatchResponse>(`/api/projects/${projectId}/scan-batch`,
-                           { method: "POST", body: JSON.stringify({ codes, attempt }) }),
+                           { method: "POST", body: JSON.stringify({ codes, attempt }) },
+                           timeoutMs),
   scanEvents: (projectId: number, level?: string, limit = 200) =>
     req<ScanEventOut[]>(`/api/projects/${projectId}/scan-events`
       + `?limit=${limit}` + (level ? `&level=${level}` : "")),
