@@ -206,6 +206,32 @@ class ScanEvent(Base):
     )
 
 
+class LoginEvent(Base):
+    """Every login attempt — success or fail — for admin audit.
+
+    Records who tried, from which browser fingerprint (a random UUID
+    persisted in the client's localStorage), the source IP, and the
+    user-agent so admin can see 'anna logged in from a new laptop'.
+    """
+    __tablename__ = "login_events"
+    id:            Mapped[int]      = mapped_column(BigInteger, primary_key=True)
+    user_id:       Mapped[Optional[int]] = mapped_column(BigInteger,
+                                        ForeignKey("users.id", ondelete="SET NULL"),
+                                        nullable=True)
+    username_tried: Mapped[str]     = mapped_column(Text, nullable=False, default="")
+    device_id:     Mapped[str]      = mapped_column(Text, nullable=False, default="")
+    ip:            Mapped[str]      = mapped_column(Text, nullable=False, default="")
+    user_agent:    Mapped[str]      = mapped_column(Text, nullable=False, default="")
+    success:       Mapped[bool]     = mapped_column(Boolean, nullable=False, default=False)
+    reason:        Mapped[str]      = mapped_column(Text, nullable=False, default="")
+    created_at:    Mapped[datetime] = mapped_column(DateTime(timezone=True),
+                                        server_default=func.now(), nullable=False)
+    __table_args__ = (
+        Index("ix_login_events_created", "created_at"),
+        Index("ix_login_events_user", "user_id"),
+    )
+
+
 class Submission(Base):
     """One row per ASL report request. Written BEFORE the network call for
     crash-safety, updated after."""

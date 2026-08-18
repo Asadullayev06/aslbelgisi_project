@@ -12,6 +12,18 @@ export interface AdminUser {
   created_at: string;
 }
 
+export interface LoginEventRow {
+  id: number;
+  user_id: number | null;
+  username: string;
+  device_id: string;
+  ip: string;
+  user_agent: string;
+  success: boolean;
+  reason: string;
+  created_at: string;
+}
+
 export interface ProjectPlan {
   id: number;
   name: string;

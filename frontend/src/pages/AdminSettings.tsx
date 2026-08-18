@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   ArrowLeft, Plus, Trash2, Pencil, Shield, HardHat, Save, X,
-  Check, KeyRound, UserPlus,
+  Check, KeyRound, UserPlus, Activity, RefreshCw, Monitor,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHead } from "@/components/ui/Card";
@@ -10,7 +10,7 @@ import { Field, Input } from "@/components/ui/Input";
 import { Toaster, useFlashes } from "@/components/ui/Toast";
 import { api } from "@/api";
 import { useAuth } from "@/auth";
-import type { AdminUser } from "@/types";
+import type { AdminUser, LoginEventRow } from "@/types";
 
 interface Props { onExit: () => void; }
 
@@ -111,11 +111,153 @@ export function AdminSettings({ onExit }: Props) {
         )}
       </Card>
 
-      <div className="text-xs text-muted mt-4">
+      <div className="text-xs text-muted mt-4 mb-6">
         Eslatma: kamida bitta faol admin qolishi shart. O'zingizni o'chira olmaysiz.
       </div>
+
+      <ActivityCard />
     </div>
   );
+}
+
+
+function ActivityCard() {
+  const [rows, setRows] = useState<LoginEventRow[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [onlySuccess, setOnlySuccess] = useState<boolean | null>(null);
+  const { flashes, push, dismiss } = useFlashes();
+
+  async function load() {
+    setBusy(true);
+    try {
+      const r = await api.loginEvents({
+        limit: 200,
+        ...(onlySuccess === null ? {} : { only_success: onlySuccess }),
+      });
+      setRows(r);
+    } catch (e: any) { push("err", String(e.message || e)); }
+    setBusy(false);
+  }
+  useEffect(() => { load(); /* refetch when filter changes */ }, [onlySuccess]);
+
+  return (
+    <>
+      <Toaster flashes={flashes} onDismiss={dismiss} />
+      <Card>
+        <CardHead
+          title="Faoliyat — kim qachon kirdi"
+          right={
+            <>
+              <Badge tone="accent"><Activity className="size-3" /> {rows?.length ?? 0}</Badge>
+              <FilterChip active={onlySuccess === null}
+                          onClick={() => setOnlySuccess(null)}>Hammasi</FilterChip>
+              <FilterChip active={onlySuccess === true}
+                          onClick={() => setOnlySuccess(true)}>Muvaffaqiyatli</FilterChip>
+              <FilterChip active={onlySuccess === false}
+                          onClick={() => setOnlySuccess(false)}>Xato</FilterChip>
+              <Button variant="outline" size="sm" onClick={load} disabled={busy}>
+                <RefreshCw className={"size-3 " + (busy ? "animate-spin" : "")} />
+              </Button>
+            </>
+          }
+        />
+        {rows === null && <div className="text-muted text-sm py-3">Yuklanmoqda…</div>}
+        {rows && rows.length === 0 && (
+          <div className="text-muted text-sm py-6 text-center italic">
+            Hozircha kirish yozuvlari yo'q.
+          </div>
+        )}
+        {rows && rows.length > 0 && (
+          <div className="rounded-lg border border-border overflow-hidden">
+            <table className="w-full text-xs">
+              <thead className="bg-surface2/60">
+                <tr>
+                  <Th>Vaqt</Th>
+                  <Th>Foydalanuvchi</Th>
+                  <Th>IP</Th>
+                  <Th>Qurilma / Brauzer</Th>
+                  <Th>Natija</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map(r => (
+                  <tr key={r.id} className="border-t border-border">
+                    <Td className="whitespace-nowrap">
+                      {new Date(r.created_at).toLocaleString()}
+                    </Td>
+                    <Td>
+                      <div className="font-mono">{r.username}</div>
+                    </Td>
+                    <Td><span className="font-mono text-[11px]">{r.ip || "—"}</span></Td>
+                    <Td>
+                      <div className="flex items-start gap-1.5">
+                        <Monitor className="size-3 mt-0.5 text-muted shrink-0" />
+                        <div className="min-w-0">
+                          <div className="text-[11px] text-muted truncate max-w-[260px]" title={r.user_agent}>
+                            {shortUA(r.user_agent)}
+                          </div>
+                          <div className="font-mono text-[10px] text-muted/60 truncate max-w-[260px]" title={r.device_id}>
+                            {r.device_id ? r.device_id.slice(0, 12) + "…" : "—"}
+                          </div>
+                        </div>
+                      </div>
+                    </Td>
+                    <Td>
+                      {r.success ? (
+                        <Badge tone="success">✓ ok</Badge>
+                      ) : (
+                        <Badge tone="danger">{reasonLabel(r.reason)}</Badge>
+                      )}
+                    </Td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <div className="text-[11px] text-muted mt-2">
+          Oxirgi 200 ta yozuv ko'rsatildi.
+        </div>
+      </Card>
+    </>
+  );
+}
+
+
+function FilterChip({ active, onClick, children }: {
+  active: boolean; onClick: () => void; children: React.ReactNode;
+}) {
+  return (
+    <button onClick={onClick}
+            className={"text-xs px-2 py-1 rounded-md border transition-colors " +
+              (active
+                ? "bg-accent/15 border-accent/50 text-accent"
+                : "border-border text-muted hover:text-text hover:border-accent/30")}>
+      {children}
+    </button>
+  );
+}
+
+function reasonLabel(reason: string): string {
+  switch (reason) {
+    case "bad_password":  return "noto'g'ri parol";
+    case "unknown_user":  return "noma'lum login";
+    case "user_disabled": return "faolsizlantirilgan";
+    default:              return reason || "xato";
+  }
+}
+
+/** Compact user-agent — just the browser and OS chunk. */
+function shortUA(ua: string): string {
+  if (!ua) return "—";
+  const m = ua.match(/(Chrome|Firefox|Safari|Edg|OPR|Opera)\/([\d.]+)/);
+  const os = /Windows NT [\d.]+/.exec(ua)?.[0]
+          || /Mac OS X [\d_.]+/.exec(ua)?.[0]?.replace(/_/g, ".")
+          || /Android [\d.]+/.exec(ua)?.[0]
+          || /iPhone OS [\d_]+/.exec(ua)?.[0]?.replace(/_/g, ".")
+          || /Linux/.exec(ua)?.[0]
+          || "";
+  return m ? `${m[1]} ${m[2].split(".")[0]} · ${os}` : ua.slice(0, 60);
 }
 
 

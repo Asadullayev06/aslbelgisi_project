@@ -1,5 +1,5 @@
 import type {
-  AdminUser, BoxContents, ProjectSummary, ScanResponse, ScanBatchResponse, ScanEventOut,
+  AdminUser, BoxContents, LoginEventRow, ProjectSummary, ScanResponse, ScanBatchResponse, ScanEventOut,
   ScanState, SearchResponse, SubmitResponse, ValidateResult,
   StockRegisterResp, StockStatusResp, StockResultResp, StockVerifyResp,
   InspectorLookupResp,
@@ -10,6 +10,26 @@ import type {
 // Called when any request comes back 401 so the shell can bounce to login.
 let onUnauthorized: (() => void) | null = null;
 export function setUnauthorizedHandler(fn: () => void) { onUnauthorized = fn; }
+
+/** Stable per-browser UUID used to identify a device across logins.
+ *  Persists in localStorage; falls back to session-scoped when storage
+ *  is unavailable (private mode, permissions). */
+const DEVICE_KEY = "mav2.device_id";
+function makeUUID(): string {
+  const c = (globalThis as any).crypto;
+  if (c?.randomUUID) return c.randomUUID();
+  // fallback for older browsers
+  return "dev-" + Math.random().toString(36).slice(2) + "-" + Date.now().toString(36);
+}
+export function getDeviceId(): string {
+  try {
+    let id = localStorage.getItem(DEVICE_KEY);
+    if (!id) { id = makeUUID(); localStorage.setItem(DEVICE_KEY, id); }
+    return id;
+  } catch {
+    return "no-storage";
+  }
+}
 
 /** `timeoutMs` is opt-in per call. Do NOT make it a global default: the ASL
  *  submit legitimately runs for minutes on a large project. */
@@ -62,7 +82,9 @@ export const api = {
   login:  (username: string, password: string) =>
     req<{ id: number; username: string; role: string }>(
       "/api/auth/login",
-      { method: "POST", body: JSON.stringify({ username, password }) },
+      { method: "POST", body: JSON.stringify({
+          username, password, device_id: getDeviceId(),
+        }) },
     ),
   logout: () => req<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
 
@@ -114,6 +136,13 @@ export const api = {
                        { method: "PATCH", body: JSON.stringify(patch) }),
   deleteUser: (id: number) =>
     req<void>(`/api/users/${id}`, { method: "DELETE" }),
+  loginEvents: (opts: { limit?: number; only_success?: boolean } = {}) => {
+    const p = new URLSearchParams();
+    if (opts.limit != null) p.set("limit", String(opts.limit));
+    if (opts.only_success != null) p.set("only_success", String(opts.only_success));
+    const qs = p.toString();
+    return req<LoginEventRow[]>("/api/users/login-events" + (qs ? "?" + qs : ""));
+  },
 
   parseFile: async (kind: "km" | "box", file: File) => {
     const fd = new FormData();

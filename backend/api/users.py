@@ -8,15 +8,15 @@ All endpoints require admin. Safety guards:
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..auth import current_user, hash_password, require_admin
 from ..db import get_session
-from ..models import User
+from ..models import LoginEvent, User
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 
@@ -149,6 +149,43 @@ def update_user(user_id: int, body: UserPatch,
         raise HTTPException(409, "bu login band")
     sess.refresh(u)
     return _to_out(u)
+
+
+class LoginEventOut(BaseModel):
+    id: int
+    user_id: int | None
+    username: str            # from users table if we can resolve it, else username_tried
+    device_id: str
+    ip: str
+    user_agent: str
+    success: bool
+    reason: str
+    created_at: str
+
+
+@router.get("/login-events", response_model=list[LoginEventOut])
+def login_events(
+    limit: int = Query(100, ge=1, le=1000),
+    only_success: bool | None = Query(None),
+    sess: Session = Depends(get_session),
+    _u: User = Depends(require_admin),
+):
+    q = (select(LoginEvent, User.username)
+         .join(User, User.id == LoginEvent.user_id, isouter=True)
+         .order_by(desc(LoginEvent.id))
+         .limit(limit))
+    if only_success is not None:
+        q = q.where(LoginEvent.success == only_success)
+    out: list[LoginEventOut] = []
+    for (e, uname) in sess.execute(q):
+        out.append(LoginEventOut(
+            id=e.id, user_id=e.user_id,
+            username=(uname or e.username_tried or "—"),
+            device_id=e.device_id, ip=e.ip, user_agent=e.user_agent,
+            success=e.success, reason=e.reason,
+            created_at=e.created_at.isoformat() if e.created_at else "",
+        ))
+    return out
 
 
 @router.delete("/{user_id}", status_code=204)
