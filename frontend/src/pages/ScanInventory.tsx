@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowLeft, Undo2, PackageMinus, AlertTriangle, ChevronDown, ChevronRight,
-  X, Trash2, Sparkles,
+  X, Trash2, Sparkles, Download,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHead } from "@/components/ui/Card";
@@ -57,6 +57,7 @@ export function ScanInventory({ projectId, onExit }: Props) {
   // Server audit log for old rejects.
   const [history, setHistory] = useState<ScanEventOut[] | null>(null);
   const [historyBusy, setHistoryBusy] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   // Cache of already-fetched closed-box contents (fetch on expand).
   const [expanded, setExpanded] = useState<Record<number, BoxContents | "loading" | "err">>({});
@@ -284,6 +285,26 @@ export function ScanInventory({ projectId, onExit }: Props) {
     setHistoryBusy(false);
   }
 
+  /** Download the inventory as .xlsx (KM → mother SSCC → mos/ekstra → series).
+   *  Endpoint is read-only, so this cannot damage project data. */
+  async function downloadExcel() {
+    setExporting(true);
+    try {
+      const blob = await api.inventoryExport(projectId);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const safe = (state?.project.name || `loyiha-${projectId}`).replace(/[^A-Za-z0-9._-]+/g, "_");
+      a.download = `inventar_${safe}.xlsx`;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+      push("hit", "Excel yuklab olindi");
+    } catch (e: any) {
+      push("err", String(e.message || e));
+    }
+    setExporting(false);
+  }
+
   if (loadingErr) {
     return (
       <div className="max-w-2xl mx-auto p-6">
@@ -460,8 +481,21 @@ export function ScanInventory({ projectId, onExit }: Props) {
 
         <div className="flex flex-col gap-4">
           <Card>
-            <CardHead title="Yopilgan qutilar"
-                      right={<Badge tone="accent">{state.closed_boxes.length}</Badge>} />
+            <CardHead
+              title="Yopilgan qutilar"
+              right={
+                <>
+                  <Badge tone="accent">{state.closed_boxes.length}</Badge>
+                  <Button variant="outline" size="sm"
+                          onClick={downloadExcel}
+                          disabled={exporting || state.closed_boxes.length === 0}
+                          title="Har bir KM kodi va ona qutisi (SSCC) bilan Excel">
+                    <Download className="size-3" />
+                    {exporting ? "Tayyorlanmoqda…" : "Excel"}
+                  </Button>
+                </>
+              }
+            />
             {state.closed_boxes.length === 0 && (
               <div className="rounded-lg border border-dashed border-border p-5 text-center text-muted italic text-sm">
                 Hali birorta quti yopilmagan

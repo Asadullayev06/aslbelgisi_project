@@ -5,7 +5,10 @@ undo their in-progress box via /discard, but only admin can undo a closed one).
 """
 from __future__ import annotations
 
+import io
+
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from sqlalchemy import and_, desc, func, select
@@ -201,6 +204,99 @@ def box_contents(project_id: int, box_id: int,
         box_id=box.id, sscc=box.sscc, is_loose=box.is_loose,
         codes_count=len(matched) + len(extras),
         matched=matched, extras=extras,
+    )
+
+
+@router.get("/inventory-export")
+def inventory_export(project_id: int,
+                     sess: Session = Depends(get_session),
+                     _u: User = Depends(current_user)):
+    """Excel export for an inventory project: one row per scanned KM code,
+    with its mother SSCC (box code), match status, and matched series.
+
+    READ-ONLY: this endpoint never modifies any table.
+
+    SSCC codes are written as strings with an explicit text ('@') number
+    format so Excel does not try to interpret them as numbers and strip
+    the leading zeros (they start with '00').
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+
+    project = sess.get(Project, project_id)
+    if project is None:
+        raise HTTPException(404, "loyiha topilmadi")
+    if getattr(project, "mode", "aggregation") != "inventory":
+        raise HTTPException(400, "faqat inventarizatsiya loyihalari uchun")
+
+    # For each aggregated km_pool row in this project, collect the
+    # matching manifest series (a code can match multiple series;
+    # array_agg + filter gives us the list, empty for extras).
+    planned = aliased(KmPool)
+    rows = sess.execute(
+        select(
+            KmPool.km_code,
+            Box.sscc,
+            Box.is_loose,
+            func.array_agg(func.distinct(planned.series))
+                .filter(and_(planned.id.isnot(None), planned.series != "")),
+        )
+        .join(Box, Box.id == KmPool.box_id)
+        .join(planned,
+              and_(planned.project_id == project_id,
+                   planned.km_code == KmPool.km_code),
+              isouter=True)
+        .where(KmPool.project_id == project_id,
+               KmPool.status == "aggregated")
+        .group_by(KmPool.km_code, Box.sscc, Box.is_loose, Box.id)
+        .order_by(Box.id.asc(), KmPool.km_code.asc())
+    ).all()
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Inventarizatsiya"
+    ws.append(["KM kodi", "Ona quti (SSCC)", "Loose", "Holat", "Seriya(lar)"])
+
+    # Header styling
+    header_font = Font(bold=True, color="FFFFFF")
+    fill = PatternFill("solid", fgColor="1F6F5C")
+    for col in range(1, 6):
+        c = ws.cell(row=1, column=col)
+        c.font = header_font; c.fill = fill
+        c.alignment = Alignment(horizontal="left")
+    ws.freeze_panes = "A2"
+
+    # Force text formatting on the SSCC column so Excel keeps the leading
+    # zeros ("00090..." rather than 9.0e+19).
+    for col_letter in ("A", "B", "E"):
+        ws.column_dimensions[col_letter].number_format = "@"
+
+    for km, sscc, is_loose, series_arr in rows:
+        series_list = sorted(s for s in (series_arr or []) if s)
+        status = "mos" if series_list else "ekstra"
+        row_idx = ws.max_row + 1
+        ws.append([str(km), str(sscc), "ha" if is_loose else "",
+                   status, ", ".join(series_list)])
+        # Belt-and-braces per-cell text format so no future numeric
+        # coercion sneaks in.
+        ws.cell(row=row_idx, column=1).number_format = "@"
+        ws.cell(row=row_idx, column=2).number_format = "@"
+
+    # Column widths
+    widths = [34, 24, 8, 10, 30]
+    from openpyxl.utils import get_column_letter as _col
+    for i, w in enumerate(widths, start=1):
+        ws.column_dimensions[_col(i)].width = w
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    safe_name = "".join(ch if ch.isalnum() or ch in "-_." else "_"
+                        for ch in (project.name or f"loyiha-{project_id}"))
+    filename = f"inventar_{safe_name}.xlsx"
+    return Response(
+        buf.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

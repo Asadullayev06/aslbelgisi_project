@@ -116,6 +116,15 @@ export const api = {
   boxContents: (projectId: number, boxId: number) =>
     req<BoxContents>(`/api/projects/${projectId}/boxes/${boxId}/contents`),
 
+  /** Inventory-only XLSX. Server sends a proper .xlsx binary; we hand the
+   *  raw Blob to the caller which then triggers the browser download. */
+  inventoryExport: async (projectId: number): Promise<Blob> => {
+    const r = await fetch(`/api/projects/${projectId}/inventory-export`,
+                          { credentials: "include" });
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    return r.blob();
+  },
+
   // Admin — project edit/delete
   updateProject: (id: number, patch: {
     name?: string; product_name?: string; series?: string;
