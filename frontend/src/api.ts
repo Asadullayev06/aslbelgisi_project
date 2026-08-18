@@ -1,5 +1,5 @@
 import type {
-  BoxContents, ProjectSummary, ScanResponse, ScanBatchResponse, ScanEventOut,
+  AdminUser, BoxContents, ProjectSummary, ScanResponse, ScanBatchResponse, ScanEventOut,
   ScanState, SearchResponse, SubmitResponse, ValidateResult,
   StockRegisterResp, StockStatusResp, StockResultResp, StockVerifyResp,
   InspectorLookupResp,
@@ -93,6 +93,27 @@ export const api = {
 
   boxContents: (projectId: number, boxId: number) =>
     req<BoxContents>(`/api/projects/${projectId}/boxes/${boxId}/contents`),
+
+  // Admin — project edit/delete
+  updateProject: (id: number, patch: {
+    name?: string; product_name?: string; series?: string;
+    business_place_id?: string; production_order_id?: string;
+  }) => req<ScanState>(`/api/projects/${id}`,
+                       { method: "PATCH", body: JSON.stringify(patch) }),
+  deleteProject: (id: number) =>
+    req<void>(`/api/projects/${id}`, { method: "DELETE" }),
+
+  // Admin — users
+  listUsers: () => req<AdminUser[]>("/api/users"),
+  createUser: (body: { username: string; password: string; role: "admin" | "operator" }) =>
+    req<AdminUser>("/api/users", { method: "POST", body: JSON.stringify(body) }),
+  updateUser: (id: number, patch: {
+    username?: string; password?: string;
+    role?: "admin" | "operator"; is_active?: boolean;
+  }) => req<AdminUser>(`/api/users/${id}`,
+                       { method: "PATCH", body: JSON.stringify(patch) }),
+  deleteUser: (id: number) =>
+    req<void>(`/api/users/${id}`, { method: "DELETE" }),
 
   parseFile: async (kind: "km" | "box", file: File) => {
     const fd = new FormData();

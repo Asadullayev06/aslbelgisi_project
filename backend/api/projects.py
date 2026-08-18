@@ -17,6 +17,9 @@ from sqlalchemy.orm import Session
 from ..auth import current_user, require_admin
 from ..db import get_session
 from ..models import BoxPool, KmPool, Project, User
+from pydantic import BaseModel, Field
+from sqlalchemy import delete as sa_delete
+
 from ..schemas import (
     InventoryProjectCreate,
     ParseFileResult,
@@ -198,6 +201,59 @@ def create_inventory_project(
         )
     sess.flush()
     return build_state(sess, project.id, u.id)
+
+
+# ── rename / delete (admin only) ────────────────────────────
+class ProjectPatch(BaseModel):
+    name:                str | None = None
+    product_name:        str | None = None
+    series:              str | None = None
+    business_place_id:   str | None = None
+    production_order_id: str | None = None
+
+
+@router.patch("/{project_id}", response_model=ScanState)
+def update_project(project_id: int, body: ProjectPatch,
+                   sess: Session = Depends(get_session),
+                   u: User = Depends(require_admin)):
+    """Rename / edit lightweight metadata. Structural fields (capacity,
+    per_box, has_loose, mode) are NOT editable — those would invalidate
+    codes already scanned."""
+    p = sess.get(Project, project_id)
+    if p is None:
+        raise HTTPException(404, "loyiha topilmadi")
+    if body.name is not None:
+        n = body.name.strip()
+        if not n:
+            raise HTTPException(400, "loyiha nomi bo'sh bo'lolmaydi")
+        p.name = n
+    if body.product_name is not None:
+        n = body.product_name.strip()
+        if not n:
+            raise HTTPException(400, "mahsulot nomi bo'sh bo'lolmaydi")
+        p.product_name = n
+    if body.series is not None:
+        p.series = body.series.strip()
+    if body.business_place_id is not None:
+        p.business_place_id = body.business_place_id.strip()
+    if body.production_order_id is not None:
+        p.production_order_id = body.production_order_id.strip()
+    sess.commit()
+    return build_state(sess, p.id, u.id)
+
+
+@router.delete("/{project_id}", status_code=204)
+def delete_project(project_id: int,
+                   sess: Session = Depends(get_session),
+                   _u: User = Depends(require_admin)):
+    """Delete a project and everything it owns (km_pool, box_pool, boxes,
+    open_boxes, submissions, scan_events all cascade). Irreversible."""
+    p = sess.get(Project, project_id)
+    if p is None:
+        raise HTTPException(404, "loyiha topilmadi")
+    sess.delete(p)
+    sess.commit()
+    return None
 
 
 # ── file parse ──────────────────────────────────────────────

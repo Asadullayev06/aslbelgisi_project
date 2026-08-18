@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { Boxes, Plus, LogOut, Shield, HardHat, ScanBarcode, Package, ArrowRight, ScanLine, Layers, Search, ClipboardList, ArrowLeft } from "lucide-react";
+import { Boxes, Plus, LogOut, Shield, HardHat, ScanBarcode, Package, ArrowRight, ScanLine, Layers, Search, ClipboardList, ArrowLeft, Settings, Trash2, Pencil, Check, X } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHead } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
+import { Input } from "@/components/ui/Input";
 import { Setup } from "@/pages/Setup";
 import { SetupInventory } from "@/pages/SetupInventory";
 import { Scan } from "@/pages/Scan";
@@ -12,6 +13,7 @@ import { GtinStock } from "@/pages/GtinStock";
 import { Inspector } from "@/pages/Inspector";
 import { CustomAggregation } from "@/pages/CustomAggregation";
 import { CodeSearch } from "@/pages/CodeSearch";
+import { AdminSettings } from "@/pages/AdminSettings";
 import { api, setUnauthorizedHandler } from "@/api";
 import { AuthContext, isAdmin, useAuth, type User } from "@/auth";
 import type { ProjectSummary } from "@/types";
@@ -28,7 +30,8 @@ type Route =
   | { kind: "stock" }
   | { kind: "inspector" }
   | { kind: "custom" }
-  | { kind: "search" };
+  | { kind: "search" }
+  | { kind: "admin" };
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -125,11 +128,15 @@ function Shell({ route, setRoute }: {
     return <ScanInventory projectId={route.projectId}
                           onExit={() => setRoute({ kind: "invPicker" })} />;
   }
+  if (route.kind === "admin") {
+    return <AdminSettings onExit={() => setRoute({ kind: "home" })} />;
+  }
   return <Home onAggregation={() => setRoute({ kind: "modeChooser" })}
                onStock={() => setRoute({ kind: "stock" })}
                onInspector={() => setRoute({ kind: "inspector" })}
                onCustom={() => setRoute({ kind: "custom" })}
-               onSearch={() => setRoute({ kind: "search" })} />;
+               onSearch={() => setRoute({ kind: "search" })}
+               onAdmin={() => setRoute({ kind: "admin" })} />;
 }
 
 
@@ -178,11 +185,12 @@ function InvPicker({ onOpen, onNew, onHome }: {
 }) {
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  useEffect(() => {
+  const load = () => {
     setErr(null);
     api.listProjects({ mode: "inventory" })
       .then(setProjects).catch(e => setErr(String(e)));
-  }, []);
+  };
+  useEffect(load, []);
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-10">
@@ -219,19 +227,9 @@ function InvPicker({ onOpen, onNew, onHome }: {
         )}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {projects?.map(p => (
-            <button key={p.id}
-                    onClick={() => onOpen(p.id)}
-                    className="text-left rounded-xl border border-border bg-surface2/40 p-4
-                               hover:border-warning/50 hover:bg-surface2/70 transition-all">
-              <div className="flex items-center justify-between gap-2 mb-1">
-                <div className="flex items-center gap-2">
-                  <ClipboardList className="size-4 text-warning" />
-                  <span className="font-semibold">{p.name}</span>
-                </div>
-                <Badge tone="warning">inventarizatsiya</Badge>
-              </div>
-              <div className="text-sm text-muted">{p.product_name}</div>
-            </button>
+            <ProjectRow key={p.id} p={p} tone="warning"
+                        icon={<ClipboardList className="size-4 text-warning" />}
+                        onOpen={onOpen} onChanged={load} />
           ))}
         </div>
       </Card>
@@ -250,13 +248,16 @@ function NewInvProjectButton({ onClick }: { onClick: () => void }) {
 }
 
 
-function Home({ onAggregation, onStock, onInspector, onCustom, onSearch }: {
+function Home({ onAggregation, onStock, onInspector, onCustom, onSearch, onAdmin }: {
   onAggregation: () => void;
   onStock: () => void;
   onInspector: () => void;
   onCustom: () => void;
   onSearch: () => void;
+  onAdmin: () => void;
 }) {
+  const { user } = useAuth();
+  const admin = isAdmin(user);
   return (
     <div className="mx-auto max-w-6xl px-6 py-10">
       <TopBar />
@@ -296,6 +297,14 @@ function Home({ onAggregation, onStock, onInspector, onCustom, onSearch }: {
           subtitle="Ichki bazadan KM/quti kodini qidirish · Excel yuklab olish"
           onClick={onSearch}
         />
+        {admin && (
+          <ToolCard
+            icon={<Settings className="size-8 text-accent" />}
+            title="Admin sozlamalari"
+            subtitle="Foydalanuvchilarni yaratish, tahrirlash va o'chirish"
+            onClick={onAdmin}
+          />
+        )}
       </div>
     </div>
   );
@@ -323,16 +332,131 @@ function ToolCard({ icon, title, subtitle, onClick }: {
 }
 
 
+/** One project row with admin-only rename/delete controls. Reused by both
+ *  the aggregation Picker and the inventory Picker. */
+function ProjectRow({ p, tone, icon, onOpen, onChanged }: {
+  p: ProjectSummary;
+  tone: "accent" | "warning";
+  icon: React.ReactNode;
+  onOpen: (id: number) => void;
+  onChanged: () => void;   // parent reloads after edit/delete
+}) {
+  const { user } = useAuth();
+  const admin = isAdmin(user);
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(p.name);
+  const [productName, setProductName] = useState(p.product_name);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function save() {
+    setErr(null); setBusy(true);
+    try {
+      await api.updateProject(p.id, { name, product_name: productName });
+      setEditing(false);
+      onChanged();
+    } catch (e: any) { setErr(String(e.message || e)); }
+    setBusy(false);
+  }
+
+  async function doDelete(e: React.MouseEvent) {
+    e.stopPropagation();
+    const status = p.status;
+    const warn = status === "submitted"
+      ? `"${p.name}" ASL ga yuborilgan loyiha. Uni butunlay o'chiramizmi? Bu amal ortga qaytmaydi.`
+      : `"${p.name}" loyihasini butunlay o'chiramizmi? Bu amal ortga qaytmaydi.`;
+    if (!confirm(warn)) return;
+    setBusy(true);
+    try {
+      await api.deleteProject(p.id);
+      onChanged();
+    } catch (e: any) { setErr(String(e.message || e)); alert(err || String(e.message || e)); }
+    setBusy(false);
+  }
+
+  if (editing) {
+    return (
+      <div className={"rounded-xl border p-4 " + (tone === "warning" ? "border-warning/50 bg-warning/5" : "border-accent/50 bg-accent/5")}>
+        <div className="flex flex-col gap-2">
+          <Input value={name} onChange={e => setName(e.target.value)}
+                 placeholder="Loyiha nomi" />
+          <Input value={productName} onChange={e => setProductName(e.target.value)}
+                 placeholder="Mahsulot nomi" />
+          {err && <div className="text-xs text-danger">{err}</div>}
+          <div className="flex gap-2 justify-end">
+            <Button variant="outline" size="sm" onClick={() => { setEditing(false); setName(p.name); setProductName(p.product_name); }}>
+              <X className="size-3" /> Bekor
+            </Button>
+            <Button variant="primary" size="sm" onClick={save} disabled={busy || !name.trim() || !productName.trim()}>
+              <Check className="size-3" /> {busy ? "…" : "Saqlash"}
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={
+      "group relative rounded-xl border border-border bg-surface2/40 p-4 " +
+      "hover:bg-surface2/70 transition-all " +
+      (tone === "warning" ? "hover:border-warning/50" : "hover:border-accent/50")
+    }>
+      <button onClick={() => onOpen(p.id)} className="w-full text-left">
+        <div className="flex items-center justify-between gap-2 mb-1">
+          <div className="flex items-center gap-2 min-w-0">
+            {icon}
+            <span className="font-semibold truncate">{p.name}</span>
+          </div>
+          {p.mode === "inventory" ? (
+            <Badge tone="warning">inventarizatsiya</Badge>
+          ) : (
+            <Badge tone={p.status === "submitted" ? "success"
+                        : p.status === "submitting" ? "warning" : "accent"}>
+              {p.status}
+            </Badge>
+          )}
+        </div>
+        <div className="text-sm text-muted">{p.product_name}</div>
+        {p.mode !== "inventory" && (
+          <div className="text-xs text-muted mt-2 flex gap-4">
+            <span>Qutilar: <b className="text-text">{p.total_boxes}</b></span>
+            <span>Har birida: <b className="text-text">{p.per_box}</b></span>
+            {p.has_loose && <span>Loose: <b className="text-text">{p.loose_qty}</b></span>}
+          </div>
+        )}
+      </button>
+
+      {admin && (
+        <div className="absolute top-2 right-2 flex gap-1 opacity-60 group-hover:opacity-100 transition-opacity">
+          <button onClick={e => { e.stopPropagation(); setEditing(true); }}
+                  title="Tahrirlash"
+                  className="p-1.5 rounded-md bg-surface/80 border border-border hover:border-accent/60 hover:text-accent">
+            <Pencil className="size-3.5" />
+          </button>
+          <button onClick={doDelete} disabled={busy}
+                  title="O'chirish"
+                  className="p-1.5 rounded-md bg-surface/80 border border-border hover:border-danger/60 hover:text-danger">
+            <Trash2 className="size-3.5" />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 function Picker({ onOpen, onNew, onHome }: {
   onOpen: (id: number) => void; onNew: () => void; onHome: () => void;
 }) {
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
-  useEffect(() => {
+  const load = () => {
     setErr(null);
     api.listProjects().then(setProjects).catch(e => setErr(String(e)));
-  }, []);
+  };
+  useEffect(load, []);
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-10">
@@ -365,30 +489,9 @@ function Picker({ onOpen, onNew, onHome }: {
         )}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {projects?.map(p => (
-            <button key={p.id}
-                    onClick={() => onOpen(p.id)}
-                    className="text-left rounded-xl border border-border bg-surface2/40 p-4
-                               hover:border-accent/50 hover:bg-surface2/70 transition-all">
-              <div className="flex items-center justify-between gap-2 mb-1">
-                <div className="flex items-center gap-2">
-                  <Boxes className="size-4 text-accent" />
-                  <span className="font-semibold">{p.name}</span>
-                </div>
-                <Badge tone={p.status === "submitted" ? "success"
-                              : p.status === "submitting" ? "warning"
-                              : "accent"}>
-                  {p.status}
-                </Badge>
-              </div>
-              <div className="text-sm text-muted">{p.product_name}</div>
-              <div className="text-xs text-muted mt-2 flex gap-4">
-                <span>Qutilar: <b className="text-text">{p.total_boxes}</b></span>
-                <span>Har birida: <b className="text-text">{p.per_box}</b></span>
-                {p.has_loose && (
-                  <span>Loose: <b className="text-text">{p.loose_qty}</b></span>
-                )}
-              </div>
-            </button>
+            <ProjectRow key={p.id} p={p} tone="accent"
+                        icon={<Boxes className="size-4 text-accent" />}
+                        onOpen={onOpen} onChanged={load} />
           ))}
         </div>
       </Card>

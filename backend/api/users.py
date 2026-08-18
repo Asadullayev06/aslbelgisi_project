@@ -1,0 +1,169 @@
+"""User admin — list / create / update password & role / delete.
+
+All endpoints require admin. Safety guards:
+  * An admin cannot delete OR deactivate their own account (would kick
+    them out and could leave the system with no admin).
+  * Deleting or demoting the last active admin is refused.
+  * Password minimum length enforced server-side too, not just in the UI.
+"""
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from ..auth import current_user, hash_password, require_admin
+from ..db import get_session
+from ..models import User
+
+router = APIRouter(prefix="/api/users", tags=["users"])
+
+MIN_PASSWORD = 4
+
+
+class UserOut(BaseModel):
+    id: int
+    username: str
+    role: str
+    is_active: bool
+    created_at: str
+
+
+def _to_out(u: User) -> UserOut:
+    return UserOut(
+        id=u.id, username=u.username, role=u.role,
+        is_active=u.is_active,
+        created_at=u.created_at.isoformat() if u.created_at else "",
+    )
+
+
+class UserCreate(BaseModel):
+    username: str = Field(min_length=1)
+    password: str = Field(min_length=MIN_PASSWORD)
+    role:     str = Field(default="operator")
+
+
+class UserPatch(BaseModel):
+    password:  str | None = None
+    role:      str | None = None
+    is_active: bool | None = None
+    username:  str | None = None
+
+
+# ── helpers ─────────────────────────────────────────────────
+def _active_admin_count(sess: Session, exclude_id: int | None = None) -> int:
+    q = select(func.count(User.id)).where(User.role == "admin", User.is_active == True)  # noqa: E712
+    if exclude_id is not None:
+        q = q.where(User.id != exclude_id)
+    return int(sess.execute(q).scalar_one())
+
+
+# ── endpoints ───────────────────────────────────────────────
+@router.get("", response_model=list[UserOut])
+def list_users(sess: Session = Depends(get_session),
+               _u: User = Depends(require_admin)):
+    rows = list(sess.execute(select(User).order_by(User.id.asc())).scalars())
+    return [_to_out(u) for u in rows]
+
+
+@router.post("", response_model=UserOut, status_code=201)
+def create_user(body: UserCreate,
+                sess: Session = Depends(get_session),
+                _u: User = Depends(require_admin)):
+    role = body.role.strip().lower()
+    if role not in ("admin", "operator"):
+        raise HTTPException(400, "role must be admin or operator")
+    name = body.username.strip()
+    if not name:
+        raise HTTPException(400, "username required")
+    exists = sess.execute(select(User).where(User.username == name)).scalar_one_or_none()
+    if exists is not None:
+        raise HTTPException(409, "bu login band")
+    u = User(username=name, role=role, is_active=True,
+             password_hash=hash_password(body.password))
+    sess.add(u)
+    try:
+        sess.commit()
+    except IntegrityError:
+        sess.rollback()
+        raise HTTPException(409, "bu login band")
+    sess.refresh(u)
+    return _to_out(u)
+
+
+@router.patch("/{user_id}", response_model=UserOut)
+def update_user(user_id: int, body: UserPatch,
+                sess: Session = Depends(get_session),
+                actor: User = Depends(require_admin)):
+    u = sess.get(User, user_id)
+    if u is None:
+        raise HTTPException(404, "foydalanuvchi topilmadi")
+
+    # Guard: never let the acting admin lock themselves out.
+    if actor.id == u.id:
+        if body.role and body.role != u.role:
+            raise HTTPException(400, "o'z rolingizni o'zgartira olmaysiz")
+        if body.is_active is False:
+            raise HTTPException(400, "o'zingizni faolsizlantira olmaysiz")
+
+    # Guard: don't drop the last active admin.
+    would_stop_admin = (
+        (body.role is not None and body.role != "admin") or
+        (body.is_active is False)
+    )
+    if u.role == "admin" and u.is_active and would_stop_admin:
+        remaining = _active_admin_count(sess, exclude_id=u.id)
+        if remaining == 0:
+            raise HTTPException(400, "kamida bitta faol admin qolishi kerak")
+
+    if body.username is not None:
+        newname = body.username.strip()
+        if not newname:
+            raise HTTPException(400, "username bo'sh bo'lolmaydi")
+        if newname != u.username:
+            clash = sess.execute(select(User).where(User.username == newname)).scalar_one_or_none()
+            if clash is not None:
+                raise HTTPException(409, "bu login band")
+            u.username = newname
+
+    if body.role is not None:
+        role = body.role.strip().lower()
+        if role not in ("admin", "operator"):
+            raise HTTPException(400, "role must be admin or operator")
+        u.role = role
+
+    if body.is_active is not None:
+        u.is_active = bool(body.is_active)
+
+    if body.password is not None:
+        if len(body.password) < MIN_PASSWORD:
+            raise HTTPException(400, f"parol kamida {MIN_PASSWORD} belgidan iborat bo'lishi kerak")
+        u.password_hash = hash_password(body.password)
+
+    try:
+        sess.commit()
+    except IntegrityError:
+        sess.rollback()
+        raise HTTPException(409, "bu login band")
+    sess.refresh(u)
+    return _to_out(u)
+
+
+@router.delete("/{user_id}", status_code=204)
+def delete_user(user_id: int,
+                sess: Session = Depends(get_session),
+                actor: User = Depends(require_admin)):
+    u = sess.get(User, user_id)
+    if u is None:
+        raise HTTPException(404, "foydalanuvchi topilmadi")
+    if actor.id == u.id:
+        raise HTTPException(400, "o'zingizni o'chira olmaysiz")
+    if u.role == "admin" and u.is_active:
+        remaining = _active_admin_count(sess, exclude_id=u.id)
+        if remaining == 0:
+            raise HTTPException(400, "kamida bitta faol admin qolishi kerak")
+    sess.delete(u)
+    sess.commit()
+    return None

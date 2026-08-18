@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from .api import auth as auth_api
 from .api import (
     custom_agg, gtin_stock, inspector, projects, scanning,
-    search as search_api, submissions,
+    search as search_api, submissions, users as users_api,
 )
 
 app = FastAPI(title="Mass Aggregation v2",
@@ -41,6 +41,7 @@ app.include_router(gtin_stock.router)
 app.include_router(inspector.router)
 app.include_router(custom_agg.router)
 app.include_router(search_api.router)
+app.include_router(users_api.router)
 
 
 @app.get("/health")

@@ -4,6 +4,14 @@ export type FlashLevel = "hit" | "err" | "warn";
 
 export type ProjectMode = "aggregation" | "inventory";
 
+export interface AdminUser {
+  id: number;
+  username: string;
+  role: "admin" | "operator";
+  is_active: boolean;
+  created_at: string;
+}
+
 export interface ProjectPlan {
   id: number;
   name: string;
