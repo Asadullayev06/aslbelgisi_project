@@ -8,11 +8,13 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from sqlalchemy import desc, select
+from sqlalchemy import and_, desc, func, select
+from sqlalchemy.orm import aliased
+from pydantic import BaseModel
 
 from ..auth import current_user, require_admin
 from ..db import get_session
-from ..models import ScanEvent, User
+from ..models import Box, KmPool, Project, ScanEvent, User
 from ..schemas import (
     LooseModeRequest,
     ScanBatchRequest,
@@ -140,6 +142,66 @@ def delete_box(project_id: int, box_id: int,
                u: User = Depends(require_admin)):
     res = scanning.delete_box(sess, project_id, box_id)
     return _wrap(res, sess, project_id, u.id)
+
+
+class BoxCodeOut(BaseModel):
+    km_code: str
+    matched_series: list[str] = []          # empty = extra (not in manifest)
+
+
+class BoxContentsOut(BaseModel):
+    box_id: int
+    sscc: str
+    is_loose: bool
+    codes_count: int
+    matched: list[BoxCodeOut] = []
+    extras:  list[BoxCodeOut] = []
+
+
+@router.get("/boxes/{box_id}/contents", response_model=BoxContentsOut)
+def box_contents(project_id: int, box_id: int,
+                 sess: Session = Depends(get_session),
+                 _u: User = Depends(current_user)):
+    """Every code inside a closed box, split into matched-against-manifest
+    and extras (scanned but not in any uploaded series). Works for both
+    modes: aggregation boxes have empty extras and no series labels."""
+    box = sess.get(Box, box_id)
+    if box is None or box.project_id != project_id:
+        raise HTTPException(404, "quti topilmadi")
+
+    # Fetch each row for this box, and (via LEFT JOIN on a self-alias) the
+    # planned rows for the same km_code in this project. Group by km_code so
+    # a code that matches multiple series gets one row with an aggregated
+    # list of series.
+    planned = aliased(KmPool)
+    rows = list(sess.execute(
+        select(KmPool.km_code,
+               func.array_agg(func.distinct(planned.series))
+                   .filter(and_(planned.id.isnot(None), planned.series != "")))
+        .join(planned,
+              and_(planned.project_id == project_id,
+                   planned.km_code == KmPool.km_code),
+              isouter=True)
+        .where(KmPool.box_id == box_id)
+        .group_by(KmPool.km_code)
+        .order_by(KmPool.km_code.asc())
+    ))
+
+    matched: list[BoxCodeOut] = []
+    extras: list[BoxCodeOut] = []
+    for km, series_arr in rows:
+        series_list = [s for s in (series_arr or []) if s]
+        item = BoxCodeOut(km_code=km, matched_series=sorted(series_list))
+        if series_list:
+            matched.append(item)
+        else:
+            extras.append(item)
+
+    return BoxContentsOut(
+        box_id=box.id, sscc=box.sscc, is_loose=box.is_loose,
+        codes_count=len(matched) + len(extras),
+        matched=matched, extras=extras,
+    )
 
 
 @router.post("/analyze")

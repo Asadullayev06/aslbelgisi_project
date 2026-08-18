@@ -18,6 +18,7 @@ from ..auth import current_user, require_admin
 from ..db import get_session
 from ..models import BoxPool, KmPool, Project, User
 from ..schemas import (
+    InventoryProjectCreate,
     ParseFileResult,
     ProjectCreate,
     ProjectSummary,
@@ -38,12 +39,19 @@ router = APIRouter(prefix="/api/projects", tags=["projects"])
 @router.get("", response_model=list[ProjectSummary])
 def list_projects(
     status: str | None = Query(None),
+    mode: str | None = Query(None),   # "aggregation" | "inventory"
     sess: Session = Depends(get_session),
     _u: User = Depends(current_user),
 ):
     q = select(Project).order_by(Project.created_at.desc())
     if status:
         q = q.where(Project.status == status)
+    if mode:
+        q = q.where(Project.mode == mode)
+    else:
+        # Default listing is aggregation-only, so existing consumers (the
+        # normal project picker) don't get inventory rows mixed in.
+        q = q.where(Project.mode == "aggregation")
     return list(sess.execute(q).scalars())
 
 
@@ -125,6 +133,68 @@ def create_project(
             pg_insert(BoxPool)
             .values([{"project_id": project.id, "sscc": s} for s in box_codes])
             .on_conflict_do_nothing(index_elements=["project_id", "sscc"])
+        )
+    sess.flush()
+    return build_state(sess, project.id, u.id)
+
+
+# ── inventory create (admin only) ───────────────────────────
+@router.post("/inventory", response_model=ScanState, status_code=201)
+def create_inventory_project(
+    body: InventoryProjectCreate,
+    sess: Session = Depends(get_session),
+    u: User = Depends(require_admin),
+):
+    """Warehouse-count project. Multiple series, KM codes per series, no SSCC
+    pool, no capacity. Never sent to ASL Belgisi.
+
+    Duplicate handling (decision c): the SAME km_code can appear in multiple
+    series — one km_pool row per (series, code). When a code that lives in
+    both Series A and B is scanned, both rows get marked matched, and the
+    box view reports both series.
+    """
+    # Validate every series and its codes up front, so a partial project
+    # can't survive a mid-loop failure.
+    if not body.series:
+        raise HTTPException(400, "kamida bitta seriya kerak")
+
+    series_seen: set[str] = set()
+    normalized: list[tuple[str, list[str], list[str]]] = []
+    for s in body.series:
+        name = s.name.strip()
+        if not name:
+            raise HTTPException(400, "seriya nomi bo'sh bo'lishi mumkin emas")
+        if name in series_seen:
+            raise HTTPException(400, f"seriya nomi takrorlanadi: {name}")
+        series_seen.add(name)
+        codes, warns = parse_pool_text(s.km_codes_text)
+        if not codes:
+            raise HTTPException(400, f"seriya '{name}' uchun KM ro'yxati bo'sh")
+        normalized.append((name, codes, warns))
+
+    project = Project(
+        name=body.name.strip(),
+        product_name=body.product_name.strip(),
+        # Inventory has no plan — the operator scans until they stop.
+        total_boxes=0, per_box=0, has_loose=False, loose_qty=0,
+        series="",                    # per-code series lives on km_pool rows
+        business_place_id="", production_order_id="",
+        status="active",
+        mode="inventory",
+        created_by=u.id,
+    )
+    sess.add(project)
+    sess.flush()
+
+    # Upload every series's codes. Same (project, km, series) is unique;
+    # ON CONFLICT DO NOTHING catches accidental within-file dupes so the
+    # rest still loads.
+    for name, codes, _warns in normalized:
+        sess.execute(
+            pg_insert(KmPool)
+            .values([{"project_id": project.id, "km_code": c, "series": name}
+                     for c in codes])
+            .on_conflict_do_nothing(index_elements=["project_id", "km_code", "series"])
         )
     sess.flush()
     return build_state(sess, project.id, u.id)

@@ -78,6 +78,11 @@ export function Scan({ projectId, onExit }: Props) {
   // "I scanned 150 but it says 148" question always has an answer.
   const [history, setHistory] = useState<ScanEventOut[] | null>(null);
   const [historyBusy, setHistoryBusy] = useState(false);
+  // Big red banner for rejected scans — a toast in the corner is easy to
+  // miss when someone's scanning fast, so this is a huge attention-grabbing
+  // surface that sits at the top of the page until dismissed or replaced.
+  const [alert, setAlert] = useState<{ code: string; reason: string;
+                                       kind: "unknown" | "duplicate" | "notinlist" } | null>(null);
 
   /** Apply state that came from a write. Stamps the clock so an in-flight
    *  poll started earlier can't land afterwards and undo it. */
@@ -227,12 +232,22 @@ export function Scan({ projectId, onExit }: Props) {
               setRejects(r => [
                 ...bad.map(b => ({ code: b.code, reason: b.message })), ...r,
               ].slice(0, 500));
+              // Big red banner — first rejected code in the batch, tagged
+              // so the UI can shout the right reason.
+              const first = bad[0];
+              const msg = first.message;
+              const kind = msg.includes("ro'yxatda yo'q") ? "notinlist"
+                         : (msg.includes("takroriy") || msg.includes("ishlatilgan")
+                            || msg.includes("hozir skanerladi")) ? "duplicate"
+                         : "unknown";
+              setAlert({ code: first.code, reason: first.message, kind });
             }
             // One toast for the batch, plus the last rejection reason — a
             // toast per code would be unreadable at this speed.
             const last = res.results[res.results.length - 1];
             if (bad.length === 0) {
               if (last) push("hit", last.message);
+              setAlert(null);       // clean batch clears the banner
             } else {
               push("err", `${bad.length} ta rad etildi · ${bad[bad.length - 1].message}`);
             }
@@ -473,6 +488,29 @@ export function Scan({ projectId, onExit }: Props) {
   return (
     <div className="mx-auto max-w-[1400px] px-6 py-6">
       <Toaster flashes={flashes} onDismiss={dismiss} />
+
+      {/* LOUD reject banner — sits at the top until dismissed or a clean
+          batch replaces it. Toasts alone are too easy to miss when someone
+          is scanning fast. */}
+      {alert && (
+        <div className="mb-4 rounded-2xl border-4 border-danger bg-danger/15 text-danger
+                        p-5 flex items-start gap-4 shadow-lg animate-pulse">
+          <AlertTriangle className="size-10 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <div className="text-2xl font-black uppercase tracking-wide">
+              {alert.kind === "notinlist" && "RO'YXATDA YO'Q KOD"}
+              {alert.kind === "duplicate" && "TAKRORIY / IShLATILGAN KOD"}
+              {alert.kind === "unknown"   && "SKANERLASHDA XATO"}
+            </div>
+            <div className="text-lg font-semibold mt-1">{alert.reason}</div>
+            <div className="font-mono text-sm mt-1 break-all opacity-80">{alert.code}</div>
+          </div>
+          <button onClick={() => setAlert(null)}
+                  className="p-2 rounded hover:bg-danger/20 shrink-0" aria-label="Yopish">
+            <span className="text-2xl leading-none">×</span>
+          </button>
+        </div>
+      )}
 
       {/* Top bar */}
       <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">

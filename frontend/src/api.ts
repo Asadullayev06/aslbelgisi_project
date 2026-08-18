@@ -1,5 +1,5 @@
 import type {
-  ProjectSummary, ScanResponse, ScanBatchResponse, ScanEventOut,
+  BoxContents, ProjectSummary, ScanResponse, ScanBatchResponse, ScanEventOut,
   ScanState, SearchResponse, SubmitResponse, ValidateResult,
   StockRegisterResp, StockStatusResp, StockResultResp, StockVerifyResp,
   InspectorLookupResp,
@@ -67,8 +67,13 @@ export const api = {
   logout: () => req<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
 
   // projects
-  listProjects: (status?: string) =>
-    req<ProjectSummary[]>("/api/projects" + (status ? `?status=${status}` : "")),
+  listProjects: (opts: { status?: string; mode?: "aggregation" | "inventory" } = {}) => {
+    const p = new URLSearchParams();
+    if (opts.status) p.set("status", opts.status);
+    if (opts.mode)   p.set("mode",   opts.mode);
+    const qs = p.toString();
+    return req<ProjectSummary[]>("/api/projects" + (qs ? `?${qs}` : ""));
+  },
 
   getProject: (id: number) => req<ScanState>(`/api/projects/${id}`),
 
@@ -79,6 +84,15 @@ export const api = {
     km_codes_text: string; box_codes_text: string;
     business_place_id?: string; production_order_id?: string;
   }) => req<ScanState>("/api/projects", { method: "POST", body: JSON.stringify(body) }),
+
+  createInventoryProject: (body: {
+    name: string; product_name: string;
+    series: { name: string; km_codes_text: string }[];
+  }) => req<ScanState>("/api/projects/inventory",
+                       { method: "POST", body: JSON.stringify(body) }),
+
+  boxContents: (projectId: number, boxId: number) =>
+    req<BoxContents>(`/api/projects/${projectId}/boxes/${boxId}/contents`),
 
   parseFile: async (kind: "km" | "box", file: File) => {
     const fd = new FormData();

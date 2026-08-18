@@ -40,6 +40,9 @@ def validate_ready(sess: Session, project_id: int) -> dict:
     project = sess.get(Project, project_id)
     if project is None:
         return {"ok": False, "reasons": ["loyiha topilmadi"]}
+    if getattr(project, "mode", "aggregation") == "inventory":
+        return {"ok": False,
+                "reasons": ["inventarizatsiya loyihasini ASL ga yuborib bo'lmaydi"]}
 
     reasons: list[str] = []
 
@@ -147,6 +150,9 @@ def submit_project(sess: Session, project_id: int, user_id: int,
     project = sess.get(Project, project_id)
     if project is None:
         return {"ok": False, "error": "loyiha topilmadi"}
+    if getattr(project, "mode", "aggregation") == "inventory":
+        return {"ok": False,
+                "error": "inventarizatsiya loyihasini ASL ga yuborib bo'lmaydi"}
     bp = (business_place_id or "").strip()
     if bp:
         project.business_place_id = bp

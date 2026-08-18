@@ -343,6 +343,7 @@ def scan_batch(sess: Session, project_id: int, user_id: int,
             results[i] = _err(f"tanib bo'lmadigan skaner: {raw[:40]}")
 
     ob = _get_or_create_open_box(sess, project_id, user_id, lock=True)
+    is_inventory = (project.mode == "inventory")
 
     run: list[tuple[int, str, str]] = []
     for idx, kind, raw, code in parsed:
@@ -350,14 +351,23 @@ def scan_batch(sess: Session, project_id: int, user_id: int,
             run.append((idx, raw, code))
             continue
         if run:
-            _claim_km_run(sess, project, user_id, ob, run, results, attempt)
+            if is_inventory:
+                _inv_claim_run(sess, project, user_id, ob, run, results, attempt)
+            else:
+                _claim_km_run(sess, project, user_id, ob, run, results, attempt)
             run = []
-        results[idx] = _scan_sscc(sess, project_id, user_id, code)
+        if is_inventory:
+            results[idx] = _inv_scan_sscc(sess, project_id, user_id, code)
+        else:
+            results[idx] = _scan_sscc(sess, project_id, user_id, code)
         # The box was consumed (or the close failed); either way re-resolve it
         # before any further KMs are claimed.
         ob = _get_or_create_open_box(sess, project_id, user_id, lock=True)
     if run:
-        _claim_km_run(sess, project, user_id, ob, run, results, attempt)
+        if is_inventory:
+            _inv_claim_run(sess, project, user_id, ob, run, results, attempt)
+        else:
+            _claim_km_run(sess, project, user_id, ob, run, results, attempt)
 
     final = [r if r is not None else _err("qayta ishlanmadi") for r in results]
     _record_events(sess, project_id, user_id, [
@@ -365,6 +375,204 @@ def scan_batch(sess: Session, project_id: int, user_id: int,
         for i, res in enumerate(final)
     ])
     return final
+
+
+# ═════════════════════════════════════════════════════════════
+# Inventory-mode scanning
+# ═════════════════════════════════════════════════════════════
+# Different rules from aggregation:
+#   * No capacity, no plan — scan freely until the operator scans an SSCC.
+#   * Any SSCC closes the box; no pre-uploaded BoxPool needed.
+#   * Codes NOT in any uploaded series get accepted anyway, marked as
+#     'extra' by inserting a km_pool row with series=''.
+#   * Decision (c): if a code appears in multiple series, ALL its planned
+#     rows are marked matched, so the box view can list every series.
+
+_INV_EXTRA_SERIES = ""    # sentinel for extras (project.series="" too)
+
+
+def _inv_extra_key(km: str) -> str:
+    return km    # kept as its own helper so grep is easy to reason about
+
+
+def _inv_claim_run(sess: Session, project: Project, user_id: int, ob: OpenBox,
+                   run: list[tuple[int, str, str]],
+                   results: list[Optional[dict]], attempt: int) -> None:
+    """Match a KM run against the manifest, insert extras where needed.
+
+    Same in-batch dedupe as aggregation: the same code twice in one batch is
+    a double scan and only the first is accepted.
+    """
+    # In-burst dedupe.
+    seen: set[str] = set()
+    todo: list[tuple[int, str, str]] = []
+    for idx, raw, km in run:
+        if km in seen:
+            results[idx] = _err(f"joriy qutingizda takroriy: {km}",
+                                kind="km", code=km)
+        else:
+            seen.add(km)
+            todo.append((idx, raw, km))
+    if not todo:
+        return
+
+    codes = [km for (_, _, km) in todo]
+
+    # Everything currently known about these codes in this project — planned
+    # rows (any series) plus previously-scanned rows (matched or extra).
+    rows = list(sess.execute(
+        select(KmPool.km_code, KmPool.series, KmPool.status,
+               KmPool.claimed_by, KmPool.open_box_id, Box.sscc)
+        .join(Box, Box.id == KmPool.box_id, isouter=True)
+        .where(KmPool.project_id == project.id, KmPool.km_code.in_(codes))
+    ))
+    # Group by code so the per-code decision has all its history at hand.
+    by_code: dict[str, list] = {}
+    for r in rows:
+        by_code.setdefault(r.km_code, []).append(r)
+
+    now = datetime.now(timezone.utc)
+    count_before = _open_box_count(sess, ob.id)
+    step = 0
+    for idx, raw, km in todo:
+        info = by_code.get(km, [])
+        planned = [r for r in info if r.status == "pending"]
+        claimed_here = [r for r in info
+                        if r.status == "claimed" and r.open_box_id == ob.id]
+        claimed_other = [r for r in info
+                         if r.status == "claimed" and r.open_box_id != ob.id]
+        aggregated = [r for r in info if r.status == "aggregated"]
+
+        # Retry idempotency — the earlier delivery reached the DB.
+        if attempt > 1 and claimed_here:
+            step += 1
+            n = count_before + step
+            results[idx] = _hit(f"qabul qilindi ({n})  ·  {km}",
+                                current=n, kind="km", code=km,
+                                matched_series=sorted(r.series for r in claimed_here
+                                                      if r.series) or [],
+                                deduped=True)
+            continue
+
+        # Already in this or another box — reject as duplicate.
+        if aggregated:
+            tail = f" ({aggregated[0].sscc})" if aggregated[0].sscc else ""
+            results[idx] = _err(f"boshqa qutida ishlatilgan{tail}: {km}",
+                                kind="km", code=km, duplicate=True)
+            continue
+        if claimed_here:
+            # Same code twice in this box (not covered by in-burst seen set —
+            # this is a scan across batches).
+            results[idx] = _err(f"joriy qutingizda takroriy: {km}",
+                                kind="km", code=km, duplicate=True)
+            continue
+        if claimed_other:
+            results[idx] = _err(
+                f"boshqa quti to'ldirilmoqda — {km}", kind="km", code=km,
+                duplicate=True)
+            continue
+
+        # Accepted. Mark every planned series matched (decision c). If none
+        # were planned, this is an "extra": insert a new row with series=''.
+        matched_series: list[str] = []
+        if planned:
+            sess.execute(
+                update(KmPool)
+                .where(KmPool.project_id == project.id,
+                       KmPool.km_code == km,
+                       KmPool.status == "pending")
+                .values(status="claimed", claimed_by=user_id,
+                        claimed_at=now, open_box_id=ob.id)
+            )
+            matched_series = sorted({r.series for r in planned if r.series})
+        else:
+            # Extra: no manifest match. Store as an unplanned claimed row so
+            # it flows through the box-close path exactly like a real match.
+            sess.execute(
+                pg_insert(KmPool).values(
+                    project_id=project.id, km_code=km, series=_INV_EXTRA_SERIES,
+                    status="claimed", claimed_by=user_id, claimed_at=now,
+                    open_box_id=ob.id,
+                ).on_conflict_do_nothing(
+                    index_elements=["project_id", "km_code", "series"])
+            )
+
+        step += 1
+        n = count_before + step
+        if matched_series:
+            joined = ", ".join(matched_series)
+            results[idx] = _hit(
+                f"qabul qilindi ({n}) · seriya: {joined} · {km}",
+                current=n, kind="km", code=km,
+                matched_series=matched_series)
+        else:
+            # Not in the manifest — still accepted (this is what the operator
+            # is here to discover), but flagged prominently so the UI can pop
+            # the big red banner.
+            results[idx] = _warn(
+                f"RO'YXATDA YO'Q — qabul qilindi ({n}) · {km}",
+                current=n, kind="km", code=km, extra=True,
+                matched_series=[])
+
+
+def _inv_scan_sscc(sess: Session, project_id: int, user_id: int, sscc: str
+                   ) -> dict:
+    """Close the inventory box under any SSCC. No BoxPool lookup."""
+    project = sess.execute(
+        select(Project).where(Project.id == project_id).with_for_update()
+    ).scalar_one_or_none()
+    if not project or project.status != "active":
+        return _err("loyiha faol emas")
+
+    ob = sess.execute(
+        select(OpenBox)
+        .where(OpenBox.project_id == project_id, OpenBox.user_id == user_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).scalar_one_or_none()
+    if ob is None:
+        return _err("quti bo'sh - avval KM larni skanerlang")
+
+    # Physical scan count = distinct km_codes, not rows. A shared code (in
+    # multiple series) occupies multiple rows in one physical box; the
+    # operator only scanned it once.
+    n = int(sess.execute(
+        select(func.count(func.distinct(KmPool.km_code)))
+        .where(KmPool.open_box_id == ob.id)
+    ).scalar_one())
+    if n == 0:
+        return _err("quti bo'sh - avval KM larni skanerlang")
+
+    # SSCC must not already label another box in this project.
+    exists = sess.execute(
+        select(Box.id).where(Box.project_id == project_id, Box.sscc == sscc)
+    ).scalar_one_or_none()
+    if exists is not None:
+        return _err(f"bu quti kodi allaqachon ishlatilgan: {sscc}")
+
+    # Inventory boxes have no capacity — record n (distinct codes) so the UI
+    # reads back consistently.
+    try:
+        with sess.begin_nested():
+            box = Box(
+                project_id=project_id, sscc=sscc, capacity=n,
+                is_loose=False, closed_by=user_id,
+            )
+            sess.add(box)
+            sess.flush()
+    except IntegrityError:
+        return _err(f"bu quti kodi allaqachon ishlatilgan: {sscc}")
+
+    sess.execute(
+        update(KmPool)
+        .where(KmPool.open_box_id == ob.id)
+        .values(status="aggregated", box_id=box.id, open_box_id=None)
+    )
+    sess.delete(ob)
+    sess.flush()
+
+    return _hit(f"quti yopildi - {sscc}  ·  {n} ta kod",
+                closed_box_id=box.id, sscc=sscc, codes_in_box=n, kind="sscc")
 
 
 # ═════════════════════════════════════════════════════════════
@@ -378,6 +586,9 @@ def undo_last(sess: Session, project_id: int, user_id: int) -> dict:
     if ob is None:
         return _err("joriy quti bo'sh")
 
+    project = sess.get(Project, project_id)
+    is_inventory = project and project.mode == "inventory"
+
     last = sess.execute(
         select(KmPool).where(KmPool.open_box_id == ob.id, KmPool.status == "claimed")
         .order_by(KmPool.claimed_at.desc(), KmPool.id.desc()).limit(1)
@@ -385,11 +596,35 @@ def undo_last(sess: Session, project_id: int, user_id: int) -> dict:
     if last is None:
         return _err("o'chirish uchun kod yo'q")
 
-    last.status = "pending"
-    last.claimed_by = None
-    last.claimed_at = None
-    last.open_box_id = None
-    return _hit(f"o'chirildi: {last.km_code}")
+    if not is_inventory:
+        last.status = "pending"
+        last.claimed_by = None
+        last.claimed_at = None
+        last.open_box_id = None
+        return _hit(f"o'chirildi: {last.km_code}")
+
+    # Inventory: one physical scan may span multiple manifest rows (decision
+    # c). Revert every row for this (project, km_code) that we own here, and
+    # delete extras since they don't belong in a pending pool.
+    km = last.km_code
+    sess.execute(
+        update(KmPool)
+        .where(KmPool.project_id == project_id,
+               KmPool.km_code == km,
+               KmPool.open_box_id == ob.id,
+               KmPool.series != "")
+        .values(status="pending", claimed_by=None, claimed_at=None,
+                open_box_id=None)
+    )
+    sess.execute(
+        delete(KmPool).where(
+            KmPool.project_id == project_id,
+            KmPool.km_code == km,
+            KmPool.open_box_id == ob.id,
+            KmPool.series == "",
+        )
+    )
+    return _hit(f"o'chirildi: {km}")
 
 
 def discard_open(sess: Session, project_id: int, user_id: int) -> dict:
@@ -400,6 +635,16 @@ def discard_open(sess: Session, project_id: int, user_id: int) -> dict:
     if ob is None:
         return _hit("joriy quti bo'sh")
 
+    project = sess.get(Project, project_id)
+    is_inventory = project and project.mode == "inventory"
+
+    if is_inventory:
+        # Extras have no manifest to return to — drop them.
+        sess.execute(
+            delete(KmPool).where(
+                KmPool.open_box_id == ob.id, KmPool.series == "",
+            )
+        )
     sess.execute(
         update(KmPool)
         .where(KmPool.open_box_id == ob.id, KmPool.status == "claimed")
@@ -433,6 +678,14 @@ def delete_box(sess: Session, project_id: int, box_id: int) -> dict:
     if box is None or box.project_id != project_id:
         return _err("quti topilmadi")
 
+    project = sess.get(Project, project_id)
+    is_inventory = project and project.mode == "inventory"
+
+    if is_inventory:
+        # Extras have no pool to return to.
+        sess.execute(delete(KmPool).where(
+            KmPool.box_id == box_id, KmPool.series == "",
+        ))
     # KMs of that box → back to pending
     sess.execute(
         update(KmPool)
@@ -440,11 +693,12 @@ def delete_box(sess: Session, project_id: int, box_id: int) -> dict:
         .values(status="pending", box_id=None, claimed_by=None,
                 claimed_at=None, open_box_id=None)
     )
-    # SSCC → pending
-    sess.execute(
-        update(BoxPool)
-        .where(BoxPool.project_id == project_id, BoxPool.sscc == box.sscc)
-        .values(status="pending", used_by=None, used_at=None)
-    )
+    # SSCC → pending (aggregation only; inventory boxes have no BoxPool row).
+    if not is_inventory:
+        sess.execute(
+            update(BoxPool)
+            .where(BoxPool.project_id == project_id, BoxPool.sscc == box.sscc)
+            .values(status="pending", used_by=None, used_at=None)
+        )
     sess.delete(box)
     return _hit(f"quti bekor qilindi ({box.sscc})")

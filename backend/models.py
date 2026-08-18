@@ -24,6 +24,7 @@ from .db import Base
 KM_STATUSES     = ("pending", "claimed", "aggregated")
 BOX_STATUSES    = ("pending", "used")
 PROJECT_STATUS  = ("active", "submitting", "submitted", "archived")
+PROJECT_MODES   = ("aggregation", "inventory")
 USER_ROLES      = ("admin", "operator")
 
 
@@ -56,6 +57,10 @@ class Project(Base):
     # Manufacturing batch / seriya — required for new projects, empty on
     # any project created before the search page shipped.
     series:              Mapped[str]      = mapped_column(Text, nullable=False, default="")
+    # aggregation = ship-to-ASL workflow (default, unchanged).
+    # inventory   = warehouse counting: multiple series per project, free-form
+    #               box sizes, extras allowed, never submitted to ASL.
+    mode:                Mapped[str]      = mapped_column(Text, nullable=False, default="aggregation")
     status:              Mapped[str]      = mapped_column(Text, nullable=False, default="active")
     created_by:          Mapped[Optional[int]] = mapped_column(BigInteger,
                                                     ForeignKey("users.id", ondelete="SET NULL"),
@@ -63,11 +68,15 @@ class Project(Base):
     created_at:          Mapped[datetime] = mapped_column(DateTime(timezone=True),
                                                     server_default=func.now(), nullable=False)
     __table_args__ = (
-        CheckConstraint("total_boxes > 0", name="ck_projects_total_boxes_pos"),
-        CheckConstraint("per_box > 0",     name="ck_projects_per_box_pos"),
-        CheckConstraint("loose_qty >= 0",  name="ck_projects_loose_nn"),
+        # Aggregation still requires capacity, but inventory projects have
+        # no per-box limit and no pre-planned total, so both must accept 0.
+        # The API layer enforces > 0 for mode='aggregation'.
+        CheckConstraint("total_boxes >= 0", name="ck_projects_total_boxes_nn"),
+        CheckConstraint("per_box >= 0",     name="ck_projects_per_box_nn"),
+        CheckConstraint("loose_qty >= 0",   name="ck_projects_loose_nn"),
         CheckConstraint("NOT has_loose OR loose_qty > 0", name="ck_projects_loose_requires_qty"),
         CheckConstraint(f"status IN {PROJECT_STATUS!r}", name="ck_projects_status"),
+        CheckConstraint(f"mode IN {PROJECT_MODES!r}", name="ck_projects_mode"),
     )
 
     @property
@@ -126,6 +135,9 @@ class KmPool(Base):
                                         ForeignKey("projects.id", ondelete="CASCADE"),
                                         nullable=False)
     km_code:     Mapped[str]      = mapped_column(Text, nullable=False)  # canonical 31 chars
+    # Inventory only: which series this planned row belongs to. Empty for
+    # aggregation and for "extra" (unplanned) scans in inventory.
+    series:      Mapped[str]      = mapped_column(Text, nullable=False, default="")
     status:      Mapped[str]      = mapped_column(Text, nullable=False, default="pending")
     claimed_by:  Mapped[Optional[int]] = mapped_column(BigInteger,
                                         ForeignKey("users.id"), nullable=True)
@@ -137,11 +149,16 @@ class KmPool(Base):
                                         ForeignKey("boxes.id", ondelete="SET NULL"),
                                         nullable=True)
     __table_args__ = (
-        UniqueConstraint("project_id", "km_code", name="uq_km_pool_project_km"),
+        # Same code CAN appear in multiple series (decision c) — uniqueness
+        # is (project, code, series). Aggregation projects always use
+        # series='' so this collapses to the old behaviour there.
+        UniqueConstraint("project_id", "km_code", "series",
+                         name="uq_km_pool_project_km_series"),
         CheckConstraint(f"status IN {KM_STATUSES!r}", name="ck_km_pool_status"),
         Index("ix_km_project_status", "project_id", "status"),
         Index("ix_km_open_box", "open_box_id"),
         Index("ix_km_box", "box_id"),
+        Index("ix_km_project_code", "project_id", "km_code"),
     )
 
 

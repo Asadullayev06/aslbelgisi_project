@@ -2,6 +2,8 @@
 
 export type FlashLevel = "hit" | "err" | "warn";
 
+export type ProjectMode = "aggregation" | "inventory";
+
 export interface ProjectPlan {
   id: number;
   name: string;
@@ -14,6 +16,9 @@ export interface ProjectPlan {
   planned_km: number;
   business_place_id: string;
   production_order_id: string;
+  series?: string;
+  inventory_series?: string[];       // inventory only
+  mode?: ProjectMode;
   status: "active" | "submitting" | "submitted" | "archived";
   created_at: string;
 }
@@ -27,6 +32,7 @@ export interface ProjectSummary {
   has_loose: boolean;
   loose_qty: number;
   status: string;
+  mode?: ProjectMode;
   created_at: string;
 }
 
@@ -37,6 +43,22 @@ export interface ClosedBox {
   capacity: number;
   is_loose: boolean;
   closed_at: string;
+  matched_count?: number;     // inventory only
+  extra_count?: number;       // inventory only
+}
+
+export interface BoxCode {
+  km_code: string;
+  matched_series: string[];   // empty = extra
+}
+
+export interface BoxContents {
+  box_id: number;
+  sscc: string;
+  is_loose: boolean;
+  codes_count: number;
+  matched: BoxCode[];
+  extras: BoxCode[];
 }
 
 export interface MissingPreview {

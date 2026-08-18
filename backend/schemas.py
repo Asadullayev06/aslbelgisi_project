@@ -28,6 +28,20 @@ class ProjectCreate(BaseModel):
     box_codes_text: str = ""     # newline-separated (raw)
 
 
+class InventorySeriesCodes(BaseModel):
+    """One series with its uploaded KM codes (raw text, newline-separated)."""
+    name: str = Field(min_length=1)
+    km_codes_text: str = ""
+
+
+class InventoryProjectCreate(BaseModel):
+    """Warehouse-inventory project. No SSCC pool, no capacity, no MOD/API key —
+    those are the aggregation workflow only."""
+    name: str = Field(min_length=1)
+    product_name: str = Field(min_length=1)
+    series: list[InventorySeriesCodes] = Field(min_length=1)
+
+
 class ProjectSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
@@ -38,6 +52,7 @@ class ProjectSummary(BaseModel):
     has_loose: bool
     loose_qty: int
     status: str
+    mode: str = "aggregation"
     created_at: datetime
 
 
@@ -47,6 +62,7 @@ class ProjectPlan(ProjectSummary):
     business_place_id: str
     production_order_id: str
     series: str = ""
+    inventory_series: list[str] = []      # inventory mode only
 
 
 # ── file parse ──────────────────────────────────────────────
@@ -58,6 +74,13 @@ class ParseFileResult(BaseModel):
 
 
 # ── scanning state (returned after every write) ─────────────
+class InventoryCodeInBox(BaseModel):
+    """One physical code inside a closed inventory box, with which series it
+    matched (empty list = code was NOT in any uploaded series → 'extra')."""
+    km_code: str
+    matched_series: list[str] = []
+
+
 class ClosedBoxOut(BaseModel):
     id: int
     sscc: str
@@ -65,6 +88,9 @@ class ClosedBoxOut(BaseModel):
     capacity: int
     is_loose: bool
     closed_at: datetime
+    # Inventory-only breakdown, filled by /projects/{id}/boxes/{box_id}/contents.
+    matched_count: int = 0
+    extra_count: int = 0
 
 
 class MissingPreview(BaseModel):
