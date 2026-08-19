@@ -506,25 +506,41 @@ export function ScanInventory({ projectId, onExit }: Props) {
                 const cur = expanded[b.id];
                 const isOpen = cur && cur !== "err";
                 return (
-                  <div key={b.id} className="rounded-lg border border-border overflow-hidden">
-                    <button
-                      className="flex items-center justify-between gap-3 w-full px-3 py-2 text-left hover:bg-surface2/40"
-                      onClick={() => toggleBox(b)}
-                    >
-                      <div className="flex items-center gap-2 min-w-0">
+                  <div key={b.id} className="group rounded-lg border border-border overflow-hidden">
+                    {/* Row header: the whole area toggles the panel, and
+                        admin gets a small trash icon on the right that
+                        stops propagation so a delete click does NOT also
+                        expand the panel. */}
+                    <div className="flex items-center justify-between gap-3 px-3 py-2 hover:bg-surface2/40">
+                      <button
+                        className="flex items-center gap-2 min-w-0 flex-1 text-left"
+                        onClick={() => toggleBox(b)}
+                      >
                         {isOpen
                           ? <ChevronDown className="size-4 shrink-0" />
                           : <ChevronRight className="size-4 shrink-0" />}
                         <span className="text-sm">Quti {i + 1}</span>
                         <span className="font-mono text-xs text-muted truncate">· {b.sscc}</span>
-                      </div>
+                      </button>
                       <div className="flex items-center gap-2 shrink-0">
                         <Badge tone="accent">{b.matched_count ?? 0} moslik</Badge>
                         {(b.extra_count ?? 0) > 0 && (
                           <Badge tone="danger">{b.extra_count} ekstra</Badge>
                         )}
+                        {admin && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); deleteBox(b.id); }}
+                            title="Bu qutini o'chirish"
+                            className="p-1.5 rounded-md border border-border bg-surface/60
+                                       text-muted opacity-70 group-hover:opacity-100
+                                       hover:border-danger/60 hover:text-danger hover:bg-danger/10
+                                       transition-all"
+                          >
+                            <Trash2 className="size-3.5" />
+                          </button>
+                        )}
                       </div>
-                    </button>
+                    </div>
                     {isOpen && cur === "loading" && (
                       <div className="p-3 text-sm text-muted italic">Yuklanmoqda…</div>
                     )}
