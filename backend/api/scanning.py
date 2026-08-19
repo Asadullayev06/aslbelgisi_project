@@ -254,22 +254,24 @@ def inventory_export(project_id: int,
 
     # For each km_code, look up its ORIGINAL scanned string (with any
     # AI91/AI92 verification chunks) from scan_events. Pick the most
-    # recent successful scan per code — that's the one currently in the
-    # box. Codes with no matching audit row (edge case: pre-audit data)
-    # get their canonical km_code as a fallback.
+    # recent ACCEPTED scan per code. Accepted covers:
+    #   * 'hit'  — matched the manifest
+    #   * 'warn' — extra (not in manifest, but scanned and kept)
+    # Both carry the full raw. Only 'err' rows (rejected) are excluded.
+    # We also require a raw longer than the canonical km, so a rare
+    # scanner-truncated event doesn't shadow a later full raw.
     raw_by_km: dict[str, str] = {}
     if rows:
         km_list = [r[0] for r in rows]
-        # Postgres DISTINCT ON gives us "the latest raw per km_code".
         from sqlalchemy import text as _text
         raw_rows = sess.execute(_text("""
             SELECT DISTINCT ON (km_code) km_code, raw_code
             FROM scan_events
             WHERE project_id = :pid
               AND km_code = ANY(:kms)
-              AND level = 'hit'
+              AND level IN ('hit', 'warn')
               AND raw_code <> ''
-            ORDER BY km_code, id DESC
+            ORDER BY km_code, length(raw_code) DESC, id DESC
         """), {"pid": project_id, "kms": km_list}).all()
         for km, raw in raw_rows:
             raw_by_km[km] = raw
