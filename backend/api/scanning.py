@@ -252,38 +252,63 @@ def inventory_export(project_id: int,
         .order_by(Box.id.asc(), KmPool.km_code.asc())
     ).all()
 
+    # For each km_code, look up its ORIGINAL scanned string (with any
+    # AI91/AI92 verification chunks) from scan_events. Pick the most
+    # recent successful scan per code — that's the one currently in the
+    # box. Codes with no matching audit row (edge case: pre-audit data)
+    # get their canonical km_code as a fallback.
+    raw_by_km: dict[str, str] = {}
+    if rows:
+        km_list = [r[0] for r in rows]
+        # Postgres DISTINCT ON gives us "the latest raw per km_code".
+        from sqlalchemy import text as _text
+        raw_rows = sess.execute(_text("""
+            SELECT DISTINCT ON (km_code) km_code, raw_code
+            FROM scan_events
+            WHERE project_id = :pid
+              AND km_code = ANY(:kms)
+              AND level = 'hit'
+              AND raw_code <> ''
+            ORDER BY km_code, id DESC
+        """), {"pid": project_id, "kms": km_list}).all()
+        for km, raw in raw_rows:
+            raw_by_km[km] = raw
+
     wb = Workbook()
     ws = wb.active
     ws.title = "Inventarizatsiya"
-    ws.append(["KM kodi", "Ona quti (SSCC)", "Loose", "Holat", "Seriya(lar)"])
+    ws.append(["Skanerlangan kod (raw)", "KM kodi", "Ona quti (SSCC)",
+               "Loose", "Holat", "Seriya(lar)"])
 
     # Header styling
     header_font = Font(bold=True, color="FFFFFF")
     fill = PatternFill("solid", fgColor="1F6F5C")
-    for col in range(1, 6):
+    for col in range(1, 7):
         c = ws.cell(row=1, column=col)
         c.font = header_font; c.fill = fill
         c.alignment = Alignment(horizontal="left")
     ws.freeze_panes = "A2"
 
-    # Force text formatting on the SSCC column so Excel keeps the leading
-    # zeros ("00090..." rather than 9.0e+19).
-    for col_letter in ("A", "B", "E"):
+    # Force text formatting on the code columns so Excel keeps the leading
+    # zeros ("00090..." rather than 9.0e+19) and doesn't mangle raw KMs.
+    for col_letter in ("A", "B", "C", "F"):
         ws.column_dimensions[col_letter].number_format = "@"
 
     for km, sscc, is_loose, series_arr in rows:
         series_list = sorted(s for s in (series_arr or []) if s)
         status = "mos" if series_list else "ekstra"
+        raw = raw_by_km.get(km) or km       # fallback if no audit row
         row_idx = ws.max_row + 1
-        ws.append([str(km), str(sscc), "ha" if is_loose else "",
+        ws.append([str(raw), str(km), str(sscc),
+                   "ha" if is_loose else "",
                    status, ", ".join(series_list)])
-        # Belt-and-braces per-cell text format so no future numeric
-        # coercion sneaks in.
+        # Belt-and-braces per-cell text format.
         ws.cell(row=row_idx, column=1).number_format = "@"
         ws.cell(row=row_idx, column=2).number_format = "@"
+        ws.cell(row=row_idx, column=3).number_format = "@"
 
-    # Column widths
-    widths = [34, 24, 8, 10, 30]
+    # Column widths — raw code is typically ~90 chars so give it room.
+    widths = [64, 34, 24, 8, 10, 30]
     from openpyxl.utils import get_column_letter as _col
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[_col(i)].width = w
