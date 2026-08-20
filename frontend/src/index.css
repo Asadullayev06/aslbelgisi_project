@@ -14,20 +14,28 @@
   --success:    150 65% 45%;
   --warning:    36  95% 55%;
   --danger:     0   84% 60%;
+  /* Foreground for buttons that use bg-accent. Dark mode: the accent is
+     bright teal, so black text reads well. Light mode overrides below. */
+  --accent-fg:  0 0% 0%;
 }
 
+/* Warm-paper light theme — palette pulled from the login page cast.
+   Cream/paper background, warm ink text, deep-green accent, purple/
+   amber/terracotta as secondary accents. */
 :root.light {
-  --bg:         210 40% 97%;
-  --surface:    0   0%  100%;
-  --surface-2:  210 30% 96%;
-  --border:     215 20% 82%;
-  --text:       222 47% 12%;
-  --muted:      215 15% 40%;
-  --accent:     174 100% 33%;
-  --accent-2:   205 89% 42%;
-  --success:    150 70% 32%;
-  --warning:    32  90% 42%;
-  --danger:     0   72% 45%;
+  --bg:         38 33% 93%;    /* #F4EFE6  paper */
+  --surface:    45 71% 97%;    /* #FFFBF2  warmer white */
+  --surface-2:  41 33% 89%;    /* #EEE7D7  soft cream */
+  --border:     40 27% 82%;    /* #DCD4C2 */
+  --text:       24 10% 10%;    /* #1B1815  warm ink */
+  --muted:      30 11% 38%;    /* #6B6255 */
+  --accent:     159 40% 30%;   /* #2F6E5A  login green */
+  --accent-2:   251 55% 62%;   /* #7A62D6  cast purple */
+  --success:    158 37% 40%;   /* #3F8A72 */
+  --warning:    34 79% 49%;    /* #E38A18  amber (loose / warn) */
+  --danger:     15 71% 48%;    /* #D25324  terracotta */
+  /* Deeper accent green needs white text for AA contrast. */
+  --accent-fg:  0 0% 100%;
 }
 
 html, body, #root {

@@ -10,7 +10,7 @@ const buttonVariants = cva(
     variants: {
       variant: {
         primary:
-          "bg-accent text-black hover:brightness-110 shadow-glow",
+          "bg-accent text-[hsl(var(--accent-fg))] hover:brightness-110 shadow-glow",
         secondary:
           "bg-surface2 text-text border border-border hover:bg-surface2/70",
         outline:

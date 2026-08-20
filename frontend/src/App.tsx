@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Boxes, Plus, LogOut, Shield, HardHat, ScanBarcode, Package, ArrowRight, ScanLine, Layers, Search, ClipboardList, ArrowLeft, Settings, Trash2, Pencil, Check, X } from "lucide-react";
+import { Boxes, Plus, LogOut, Shield, HardHat, ScanBarcode, Package, ArrowRight, ScanLine, Layers, Search, ClipboardList, ArrowLeft, Settings, Trash2, Pencil, Check, X, Sun, Moon } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHead } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
@@ -510,8 +510,21 @@ function TopBar() {
 
 function UserChip() {
   const { user, logout } = useAuth();
+  const [theme, setTheme] = useState<"dark" | "light">(() =>
+    (typeof document !== "undefined" && document.documentElement.classList.contains("light"))
+      ? "light" : "dark");
   if (!user) return null;
   const admin = isAdmin(user);
+
+  const toggleTheme = () => {
+    const next = theme === "dark" ? "light" : "dark";
+    const root = document.documentElement;
+    root.classList.remove("dark", "light");
+    root.classList.add(next);
+    try { localStorage.setItem("mav2.theme", next); } catch { /* ignore */ }
+    setTheme(next);
+  };
+
   return (
     <div className="flex items-center gap-2 rounded-full border border-border bg-surface/80 backdrop-blur px-3 py-1.5 shadow-sm">
       {admin ? <Shield className="size-4 text-accent" /> : <HardHat className="size-4 text-warning" />}
@@ -522,8 +535,13 @@ function UserChip() {
           {admin ? "admin" : "operator"}
         </span>
       </div>
+      <button onClick={toggleTheme}
+              title={theme === "dark" ? "Yorug' rejim" : "Qorong'u rejim"}
+              className="ml-1 text-muted hover:text-accent p-1 rounded hover:bg-accent/10">
+        {theme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}
+      </button>
       <button onClick={logout} title="Chiqish"
-              className="ml-1 text-muted hover:text-danger p-1 rounded hover:bg-danger/10">
+              className="text-muted hover:text-danger p-1 rounded hover:bg-danger/10">
         <LogOut className="size-4" />
       </button>
     </div>
