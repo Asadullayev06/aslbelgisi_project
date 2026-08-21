@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Boxes, Plus, LogOut, Shield, HardHat, ScanBarcode, Package, ArrowRight, ScanLine, Layers, Search, ClipboardList, ArrowLeft, Settings, Trash2, Pencil, Check, X, Sun, Moon } from "lucide-react";
+import { Boxes, Plus, LogOut, Shield, HardHat, ScanBarcode, Package, ArrowRight, ScanLine, Layers, Search, ClipboardList, ArrowLeft, Settings, Trash2, Pencil, Check, X, Sun, Moon, Barcode } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHead } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
@@ -14,6 +14,7 @@ import { Inspector } from "@/pages/Inspector";
 import { CustomAggregation } from "@/pages/CustomAggregation";
 import { CodeSearch } from "@/pages/CodeSearch";
 import { AdminSettings } from "@/pages/AdminSettings";
+import { SsccGenerator } from "@/pages/SsccGenerator";
 import { api, setUnauthorizedHandler } from "@/api";
 import { AuthContext, isAdmin, useAuth, type User } from "@/auth";
 import type { ProjectSummary } from "@/types";
@@ -31,6 +32,7 @@ type Route =
   | { kind: "inspector" }
   | { kind: "custom" }
   | { kind: "search" }
+  | { kind: "sscc" }
   | { kind: "admin" };
 
 export default function App() {
@@ -131,11 +133,15 @@ function Shell({ route, setRoute }: {
   if (route.kind === "admin") {
     return <AdminSettings onExit={() => setRoute({ kind: "home" })} />;
   }
+  if (route.kind === "sscc") {
+    return <SsccGenerator onExit={() => setRoute({ kind: "home" })} />;
+  }
   return <Home onAggregation={() => setRoute({ kind: "modeChooser" })}
                onStock={() => setRoute({ kind: "stock" })}
                onInspector={() => setRoute({ kind: "inspector" })}
                onCustom={() => setRoute({ kind: "custom" })}
                onSearch={() => setRoute({ kind: "search" })}
+               onSscc={() => setRoute({ kind: "sscc" })}
                onAdmin={() => setRoute({ kind: "admin" })} />;
 }
 
@@ -248,12 +254,13 @@ function NewInvProjectButton({ onClick }: { onClick: () => void }) {
 }
 
 
-function Home({ onAggregation, onStock, onInspector, onCustom, onSearch, onAdmin }: {
+function Home({ onAggregation, onStock, onInspector, onCustom, onSearch, onSscc, onAdmin }: {
   onAggregation: () => void;
   onStock: () => void;
   onInspector: () => void;
   onCustom: () => void;
   onSearch: () => void;
+  onSscc: () => void;
   onAdmin: () => void;
 }) {
   const { user } = useAuth();
@@ -296,6 +303,12 @@ function Home({ onAggregation, onStock, onInspector, onCustom, onSearch, onAdmin
           title="Kod Qidiruv"
           subtitle="Ichki bazadan KM/quti kodini qidirish · Excel yuklab olish"
           onClick={onSearch}
+        />
+        <ToolCard
+          icon={<Barcode className="size-8 text-accent" />}
+          title="SSCC"
+          subtitle="20 raqamli ichki quti kodlarini yaratish · GS1 Mod-10 · Excel"
+          onClick={onSscc}
         />
         {admin && (
           <ToolCard

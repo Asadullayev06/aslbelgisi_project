@@ -125,6 +125,41 @@ export const api = {
     return r.blob();
   },
 
+  // SSCC / internal box label generator
+  ssccPreview: (body: { product_name: string; company_inn: string;
+                        lot_series: string; num_boxes: number }) =>
+    req<{ codes_20: string[]; codes_7: string[]; count: number }>(
+      "/api/sscc/preview",
+      { method: "POST", body: JSON.stringify(body) }),
+  ssccXlsx20: async (body: { product_name: string; company_inn: string;
+                             lot_series: string; num_boxes: number }): Promise<Blob> => {
+    const r = await fetch("/api/sscc/xlsx-20", {
+      method: "POST", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      let msg = `${r.status} ${r.statusText}`;
+      try { const j = await r.json(); if (j.detail) msg = String(j.detail); } catch {}
+      throw new Error(msg);
+    }
+    return r.blob();
+  },
+  ssccXlsx7: async (body: { product_name: string; company_inn: string;
+                            lot_series: string; num_boxes: number }): Promise<Blob> => {
+    const r = await fetch("/api/sscc/xlsx-7", {
+      method: "POST", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      let msg = `${r.status} ${r.statusText}`;
+      try { const j = await r.json(); if (j.detail) msg = String(j.detail); } catch {}
+      throw new Error(msg);
+    }
+    return r.blob();
+  },
+
   // Admin — project edit/delete
   updateProject: (id: number, patch: {
     name?: string; product_name?: string; series?: string;
