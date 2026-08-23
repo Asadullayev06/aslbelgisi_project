@@ -376,7 +376,7 @@ export function Login() {
                   <label htmlFor="lp-user">Login</label>
                   <div className="lp-inputWrap">
                     <input id="lp-user" ref={nameRef} type="text" autoComplete="username" required
-                           placeholder="admin / worker1 / worker2"
+                           placeholder="loginingiz"
                            value={username}
                            onChange={e => setUsername(e.target.value)}
                            onFocus={() => focusFn.current(210, 50)}
@@ -415,14 +415,6 @@ export function Login() {
                   {busy ? "Kirilmoqda…" : "Kirish"}
                 </button>
               </form>
-
-              <div className="lp-hints">
-                <span>admin / admin123</span>
-                <span className="lp-dot">·</span>
-                <span>worker1 / worker123</span>
-                <span className="lp-dot">·</span>
-                <span>worker2 / worker123</span>
-              </div>
             </>
           )}
         </div>
