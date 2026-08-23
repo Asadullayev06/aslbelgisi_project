@@ -53,10 +53,10 @@ def _read_rows(name: str, raw: bytes) -> list[str]:
 
     if lname.endswith((".xlsx", ".xlsm", ".xls")):
         try:
-            # first sheet only. Read ALL columns, not just A — some files
-            # store one KM code as three cells (identity, AI91, AI92) rather
-            # than one joined cell, and we want to reconstruct the original
-            # code either way.
+            # First sheet only, ALL columns. Some .xlsx exports store one
+            # KM code as three cells (identity, AI91 chunk, AI92 chunk)
+            # rather than one joined cell — we want the FULL raw code either
+            # way, so we walk every cell of the row and concatenate.
             df = pd.read_excel(
                 io.BytesIO(raw), dtype=str,
                 sheet_name=0, header=None, engine=None,
@@ -74,9 +74,15 @@ def _read_rows(name: str, raw: bytes) -> list[str]:
                     continue
                 parts.append(s)
             if parts:
-                # single space joins pieces; if the file already had one
-                # cell per row, parts is [that_cell] and no join happens.
-                out.append(" ".join(parts))
+                # Concatenate with NO separator — the AI91/AI92 chunks are
+                # meant to sit flush against the identity in a KM string
+                # (`…QdXq91+mwo92+iVlL…`, not `…QdXq 91+mwo 92+iVlL…`).
+                # Also collapse any internal whitespace inside the source
+                # cells so a "one cell per row with visible spaces" file
+                # produces the same clean output as a "three cells" one.
+                joined = "".join(parts)
+                joined = "".join(joined.split())    # strip ALL whitespace
+                out.append(joined)
         return out
 
     # text / csv / tsv / whatever — one line = one code, verbatim
