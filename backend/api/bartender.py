@@ -19,18 +19,66 @@ from __future__ import annotations
 import csv
 import io
 
+import pandas as pd
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import Response
 
 from ..auth import current_user
 from ..models import User
-from ..services.codes import extract_cells_from_file
 
 router = APIRouter(prefix="/api/bartender", tags=["bartender"])
 
 # Zero-width space — forces Excel to treat the cell as text so "1-450"
 # doesn't become a date and long tokens don't become scientific notation.
 _ZWSP = "​"
+
+
+def _read_rows(name: str, raw: bytes) -> list[str]:
+    """STRICT one-row-in / one-code-out reader.
+
+    The shared `extract_cells_from_file` flattens every cell of every sheet
+    and tries multiple CSV delimiters — great for pool uploads where any
+    layout is fair game, but wrong for BarTender:
+
+      * a KM code containing GS separators (rendered as spaces) got split
+        into 2–3 pieces per row when the CSV sniffer picked whitespace as
+        the delimiter, and
+      * additional sheets in an .xlsx got concatenated.
+
+    Here we take EXACTLY column A of the FIRST sheet (Excel), or every
+    non-empty raw line (text/CSV) — no delimiter parsing at all. Whatever
+    the operator wrote in each row is treated as one code, verbatim.
+    """
+    lname = (name or "").lower()
+
+    if lname.endswith((".xlsx", ".xlsm", ".xls")):
+        try:
+            # first sheet only, first column only
+            df = pd.read_excel(
+                io.BytesIO(raw), dtype=str,
+                sheet_name=0, header=None, usecols=[0], engine=None,
+            )
+        except Exception as e:
+            raise HTTPException(400, f"Excel faylni o'qib bo'lmadi: {e}")
+        out: list[str] = []
+        for v in df.iloc[:, 0].dropna().tolist():
+            s = str(v).strip()
+            # keep internal spaces (GS separators may render as space)
+            if s and s.lower() != "nan":
+                out.append(s)
+        return out
+
+    # text / csv / tsv / whatever — one line = one code, verbatim.
+    if isinstance(raw, bytes):
+        text = raw.decode("utf-8-sig", errors="replace")
+    else:
+        text = raw
+    out = []
+    for line in text.splitlines():
+        s = line.strip()
+        if s:
+            out.append(s)
+    return out
 
 
 def _to_bartender_rows(codes: list[str]) -> list[list[str]]:
@@ -60,13 +108,7 @@ async def generate(file: UploadFile = File(...),
     if not raw:
         raise HTTPException(400, "fayl bo'sh")
 
-    name = file.filename or ""
-    cells = extract_cells_from_file(name, raw)
-
-    # Filter empty / whitespace-only entries and any obvious 'nan' pandas
-    # sentinels that slip through from mixed spreadsheets.
-    codes = [c.strip() for c in cells
-             if c and c.strip() and c.strip().lower() != "nan"]
+    codes = _read_rows(file.filename or "", raw)
     if not codes:
         raise HTTPException(400, "faylda kodlar topilmadi")
 
@@ -107,9 +149,7 @@ async def preview(file: UploadFile = File(...),
     raw = await file.read()
     if not raw:
         raise HTTPException(400, "fayl bo'sh")
-    cells = extract_cells_from_file(file.filename or "", raw)
-    codes = [c.strip() for c in cells
-             if c and c.strip() and c.strip().lower() != "nan"]
+    codes = _read_rows(file.filename or "", raw)
     if not codes:
         raise HTTPException(400, "faylda kodlar topilmadi")
     total = len(codes)
