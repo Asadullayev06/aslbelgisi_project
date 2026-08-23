@@ -10,13 +10,13 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import desc, func, select
+from sqlalchemy import delete, desc, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..auth import current_user, hash_password, require_admin
 from ..db import get_session
-from ..models import LoginEvent, User
+from ..models import BoxPool, KmPool, LoginEvent, OpenBox, Submission, User
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 
@@ -201,6 +201,24 @@ def delete_user(user_id: int,
         remaining = _active_admin_count(sess, exclude_id=u.id)
         if remaining == 0:
             raise HTTPException(400, "kamida bitta faol admin qolishi kerak")
+
+    # Detach the user's activity so the FK deletes don't 500.
+    # Claimed (in-progress) KMs go back to the pool; already-aggregated
+    # KMs, used box-pool rows and submissions just lose attribution.
+    sess.execute(
+        update(KmPool)
+        .where(KmPool.claimed_by == u.id, KmPool.status == "claimed")
+        .values(status="pending", claimed_by=None, claimed_at=None, open_box_id=None)
+    )
+    sess.execute(
+        update(KmPool)
+        .where(KmPool.claimed_by == u.id)
+        .values(claimed_by=None)
+    )
+    sess.execute(delete(OpenBox).where(OpenBox.user_id == u.id))
+    sess.execute(update(BoxPool).where(BoxPool.used_by == u.id).values(used_by=None))
+    sess.execute(update(Submission).where(Submission.submitted_by == u.id).values(submitted_by=None))
+
     sess.delete(u)
     sess.commit()
     return None
