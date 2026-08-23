@@ -86,14 +86,25 @@ def _read_rows(name: str, raw: bytes) -> list[str]:
         return out
 
     # text / csv / tsv / whatever — one line = one code, verbatim
-    # (including internal delimiters and spaces).
+    # (including internal delimiters and GS characters).
+    #
+    # DO NOT use str.splitlines() here: Python treats GS (\x1D), RS
+    # (\x1E), FS (\x1C) and NEL (\x85) as line separators along with
+    # \n/\r\n. KM codes use \x1D between the AI91 and AI92 segments
+    # (some CSV exports render it as a visible space, some keep it
+    # literal). splitlines() was shredding each KM into 3 pieces at
+    # those boundaries — which is exactly what "output has 3× rows"
+    # was about. Split on real newlines only.
     if isinstance(raw, bytes):
         text = raw.decode("utf-8-sig", errors="replace")
     else:
         text = raw
     out = []
-    for line in text.splitlines():
-        s = line.strip()
+    for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        # Collapse any internal whitespace inside a single line (spaces,
+        # visible-rendered GS separators, tabs) so the emitted code is
+        # the clean concatenated KM string the printer expects.
+        s = "".join(line.split())
         if s:
             out.append(s)
     return out
