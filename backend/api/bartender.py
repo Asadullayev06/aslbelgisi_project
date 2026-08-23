@@ -53,22 +53,34 @@ def _read_rows(name: str, raw: bytes) -> list[str]:
 
     if lname.endswith((".xlsx", ".xlsm", ".xls")):
         try:
-            # first sheet only, first column only
+            # first sheet only. Read ALL columns, not just A — some files
+            # store one KM code as three cells (identity, AI91, AI92) rather
+            # than one joined cell, and we want to reconstruct the original
+            # code either way.
             df = pd.read_excel(
                 io.BytesIO(raw), dtype=str,
-                sheet_name=0, header=None, usecols=[0], engine=None,
+                sheet_name=0, header=None, engine=None,
             )
         except Exception as e:
             raise HTTPException(400, f"Excel faylni o'qib bo'lmadi: {e}")
         out: list[str] = []
-        for v in df.iloc[:, 0].dropna().tolist():
-            s = str(v).strip()
-            # keep internal spaces (GS separators may render as space)
-            if s and s.lower() != "nan":
-                out.append(s)
+        for _, row in df.iterrows():
+            parts: list[str] = []
+            for v in row.tolist():
+                if v is None:
+                    continue
+                s = str(v).strip()
+                if not s or s.lower() == "nan":
+                    continue
+                parts.append(s)
+            if parts:
+                # single space joins pieces; if the file already had one
+                # cell per row, parts is [that_cell] and no join happens.
+                out.append(" ".join(parts))
         return out
 
-    # text / csv / tsv / whatever — one line = one code, verbatim.
+    # text / csv / tsv / whatever — one line = one code, verbatim
+    # (including internal delimiters and spaces).
     if isinstance(raw, bytes):
         text = raw.decode("utf-8-sig", errors="replace")
     else:
