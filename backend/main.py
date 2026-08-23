@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .api import auth as auth_api
 from .api import (
+    bartender as bartender_api,
     custom_agg, gtin_stock, inspector, projects, scanning,
     search as search_api, sscc as sscc_api, submissions, users as users_api,
 )
@@ -43,6 +44,7 @@ app.include_router(custom_agg.router)
 app.include_router(search_api.router)
 app.include_router(users_api.router)
 app.include_router(sscc_api.router)
+app.include_router(bartender_api.router)
 
 
 @app.get("/health")

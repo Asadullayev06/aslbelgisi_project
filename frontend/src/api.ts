@@ -160,6 +160,33 @@ export const api = {
     return r.blob();
   },
 
+  // BarTender CSV generator
+  bartenderPreview: async (file: File) => {
+    const fd = new FormData(); fd.append("file", file);
+    const r = await fetch("/api/bartender/preview",
+      { method: "POST", body: fd, credentials: "include" });
+    if (!r.ok) {
+      let msg = `${r.status} ${r.statusText}`;
+      try { const j = await r.json(); if (j.detail) msg = String(j.detail); } catch {}
+      throw new Error(msg);
+    }
+    return (await r.json()) as {
+      total: number; first: string[];
+      short_count: number; short_sample: [number, string][];
+    };
+  },
+  bartenderGenerate: async (file: File): Promise<Blob> => {
+    const fd = new FormData(); fd.append("file", file);
+    const r = await fetch("/api/bartender/generate",
+      { method: "POST", body: fd, credentials: "include" });
+    if (!r.ok) {
+      let msg = `${r.status} ${r.statusText}`;
+      try { const j = await r.json(); if (j.detail) msg = String(j.detail); } catch {}
+      throw new Error(msg);
+    }
+    return r.blob();
+  },
+
   // Admin — project edit/delete
   updateProject: (id: number, patch: {
     name?: string; product_name?: string; series?: string;
