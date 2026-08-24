@@ -43,6 +43,12 @@ class ResultBody(BaseModel):
     product_series: str = ""
 
 
+class KmOnlyBody(BaseModel):
+    api_key: str = Field(min_length=1)
+    inn: str = Field(min_length=1)
+    product_series: str = ""
+
+
 # ── response models ────────────────────────────────────────
 class VerifyOut(BaseModel):
     ok: bool
@@ -176,5 +182,48 @@ def result(export_id: str, body: ResultBody, _u: User = Depends(current_user)):
         available_series=available,
         zip_b64=base64.b64encode(zip_bytes).decode("ascii") if zip_bytes else "",
         zip_filename=res.get("file_name", f"asl_stock_export_{export_id}.zip"),
+        fetched_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    )
+
+
+class KmOnlyOut(BaseModel):
+    ok: bool
+    export_id: str = ""
+    km_codes: list[str] = []
+    row_count: int = 0        # KM count
+    transport_count: int = 0  # how many transport codes we expanded
+    warnings: list[str] = []
+    fetched_at: str = ""
+    error: str = ""
+
+
+@router.post("/exports/{export_id}/km-only", response_model=KmOnlyOut)
+def km_only(export_id: str, body: KmOnlyBody, _u: User = Depends(current_user)):
+    """9.3 flow — take the export's rows and unpack every transport
+    (SSCC / BOX_LV_*) code to its child consumption KMs, returning ONLY
+    the flat KM list. UNIT-level rows in the export are kept as-is."""
+    res = asl_stock.get_export_result(body.api_key.strip(), export_id)
+    if not res.get("success"):
+        return KmOnlyOut(ok=False, export_id=export_id,
+                         error=res.get("error", "result failed"))
+
+    rows = asl_stock.normalize_stock_rows(res.get("data") or {})
+    if body.product_series.strip():
+        rows, _ = asl_stock.match_series_locally(rows, body.product_series)
+
+    codes_to_expand = [r.get("code", "") for r in rows if r.get("code")]
+    transport_codes = [c for c in codes_to_expand
+                       if not (c.startswith("01") and len(c) >= 31)]
+
+    expanded = asl_stock.expand_transport_to_kms(
+        body.api_key.strip(), body.inn.strip(), codes_to_expand,
+    )
+    return KmOnlyOut(
+        ok=True,
+        export_id=export_id,
+        km_codes=expanded.get("km_codes", []),
+        row_count=len(expanded.get("km_codes", [])),
+        transport_count=len(transport_codes),
+        warnings=expanded.get("warnings", []),
         fetched_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
     )

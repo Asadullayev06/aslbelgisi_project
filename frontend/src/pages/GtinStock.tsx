@@ -17,11 +17,20 @@ const STATUSES       = ["EMITTED", "APPLIED", "INTRODUCED", "WITHDRAWN", "WRITTE
 const EMISSION_TYPES = ["PRIMARY", "REMAINS", "COMISSION", "REMARK", "EXTERNAL"];
 const RELEASE_METHODS = ["IMPORT", "PRODUCTION", "CIRCULATION"];
 
+type OutputMode = "full" | "km_only";
+
+type KmOnlyResult = {
+  ok: boolean; export_id: string; km_codes: string[];
+  row_count: number; transport_count: number;
+  warnings: string[]; fetched_at: string; error: string;
+};
+
 type Phase =
   | { kind: "idle" }
   | { kind: "registering" }
-  | { kind: "polling"; exportId: string; status: string; startedAt: number }
+  | { kind: "polling"; exportId: string; status: string; startedAt: number; mode: OutputMode }
   | { kind: "done"; result: StockResultResp }
+  | { kind: "done_km"; result: KmOnlyResult }
   | { kind: "error"; message: string; recoverableExportId?: string };
 
 export function GtinStock({ onExit }: { onExit: () => void }) {
@@ -38,6 +47,7 @@ export function GtinStock({ onExit }: { onExit: () => void }) {
   const [emissionTypes, setEmissionTypes] = useState<string[]>(["PRIMARY"]);
   const [releaseMethods, setReleaseMethods] = useState<string[]>(["IMPORT"]);
   const [productSeries, setProductSeries] = useState("");
+  const [mode, setMode] = useState<OutputMode>("full");
 
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const { flashes, push, dismiss } = useFlashes();
@@ -69,9 +79,10 @@ export function GtinStock({ onExit }: { onExit: () => void }) {
   }
 
   // ── run / poll ───────────────────────────────────────
-  function startPolling(exportId: string) {
+  function startPolling(exportId: string, outputMode: OutputMode = mode) {
     if (pollTimer.current) clearInterval(pollTimer.current);
-    setPhase({ kind: "polling", exportId, status: "CREATED", startedAt: Date.now() });
+    setPhase({ kind: "polling", exportId, status: "CREATED",
+               startedAt: Date.now(), mode: outputMode });
     const tick = async () => {
       try {
         const s = await api.stockStatus(exportId, aslKey.trim());
@@ -82,6 +93,23 @@ export function GtinStock({ onExit }: { onExit: () => void }) {
         }
         if (s.status === "SUCCESS" || s.ready) {
           if (pollTimer.current) clearInterval(pollTimer.current);
+          if (outputMode === "km_only") {
+            // 9.3 flow — unpack transports to KMs. Takes longer, so show
+            // a distinct "unpacking" phase.
+            setPhase({ kind: "polling", exportId,
+                       status: "UNPACKING (9.3)", startedAt: Date.now(),
+                       mode: outputMode });
+            const r = await api.stockKmOnly(
+              exportId, aslKey.trim(), inn.trim(), productSeries.trim());
+            if (r.ok) {
+              setPhase({ kind: "done_km", result: r });
+              push("hit", `Tayyor: ${r.row_count} ta KM kod`);
+            } else {
+              setPhase({ kind: "error",
+                         message: r.error || "km-only fetch failed" });
+            }
+            return;
+          }
           const r = await api.stockResult(exportId, aslKey.trim(), productSeries.trim());
           if (r.ok) {
             setPhase({ kind: "done", result: r });
@@ -294,6 +322,47 @@ export function GtinStock({ onExit }: { onExit: () => void }) {
               </Field>
             </div>
 
+            {/* Output mode — FULL = 9.1 export (KM + SSCC + series);
+                 KM ONLY = 9.1 export followed by 9.3 nested-codes/owner-check
+                 to unpack each transport code into its child KMs. */}
+            <div className="mt-4">
+              <div className="text-xs uppercase tracking-widest text-muted mb-2">
+                Natija turi
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                <button type="button"
+                        onClick={() => setMode("full")}
+                        className={"text-left rounded-xl border p-3 transition-colors " +
+                          (mode === "full"
+                            ? "border-accent bg-accent/10"
+                            : "border-border bg-surface2/40 hover:border-accent/50")}>
+                  <div className="flex items-center gap-2 mb-1">
+                    <div className={"size-4 rounded-full border-2 " +
+                      (mode === "full" ? "border-accent bg-accent" : "border-border")} />
+                    <div className="font-semibold text-sm">To'liq (joriy)</div>
+                  </div>
+                  <div className="text-xs text-muted leading-snug">
+                    KM + SSCC + seriya · barcha ustunlar bilan · 9.1 metod
+                  </div>
+                </button>
+                <button type="button"
+                        onClick={() => setMode("km_only")}
+                        className={"text-left rounded-xl border p-3 transition-colors " +
+                          (mode === "km_only"
+                            ? "border-accent bg-accent/10"
+                            : "border-border bg-surface2/40 hover:border-accent/50")}>
+                  <div className="flex items-center gap-2 mb-1">
+                    <div className={"size-4 rounded-full border-2 " +
+                      (mode === "km_only" ? "border-accent bg-accent" : "border-border")} />
+                    <div className="font-semibold text-sm">Faqat KM kodlar</div>
+                  </div>
+                  <div className="text-xs text-muted leading-snug">
+                    Transport kodlar ichini ochib · 9.3 metod · sekinroq
+                  </div>
+                </button>
+              </div>
+            </div>
+
             <div className="mt-4 flex flex-col gap-2">
               <Button variant="primary" size="lg" onClick={runSearch}
                       disabled={!verified || phase.kind === "registering" || phase.kind === "polling"}>
@@ -316,6 +385,10 @@ export function GtinStock({ onExit }: { onExit: () => void }) {
         {/* RIGHT — status + results */}
         <div className="flex flex-col gap-4">
           <StatusPanel phase={phase} onRecheck={recheck} />
+
+          {phase.kind === "done_km" && (
+            <KmOnlyResult result={phase.result} gtin={gtin.trim()} />
+          )}
 
           {phase.kind === "done" && (
             <>
@@ -460,6 +533,21 @@ function StatusPanel({ phase, onRecheck }: { phase: Phase; onRecheck: () => void
       </Card>
     );
   }
+  if (phase.kind === "done_km") {
+    return (
+      <Card>
+        <CardHead title="Holat"
+                  right={<Badge tone="success"><CheckCircle2 className="size-3" /> tayyor</Badge>} />
+        <div className="text-sm">
+          Export <span className="font-mono">{phase.result.export_id}</span> yuklandi —{" "}
+          <b>{phase.result.row_count.toLocaleString()} ta KM kod</b>
+          {phase.result.transport_count > 0 && (
+            <> · {phase.result.transport_count} transport kodidan ochildi</>
+          )}
+        </div>
+      </Card>
+    );
+  }
   return (
     <Card>
       <CardHead title="Holat"
@@ -558,5 +646,82 @@ function Line({ label, value }: { label: string; value: string }) {
       <div className="text-[11px] uppercase tracking-wide text-muted">{label}</div>
       <div className="text-sm mt-0.5 break-all">{value}</div>
     </div>
+  );
+}
+
+
+function KmOnlyResult({ result, gtin }: { result: KmOnlyResult; gtin: string }) {
+  function download(kind: "txt" | "csv") {
+    const body = result.km_codes.join("\n") + "\n";
+    const blob = new Blob(
+      kind === "csv" ? ["﻿" + body] : [body],
+      { type: kind === "csv" ? "text/csv;charset=utf-8" : "text/plain;charset=utf-8" },
+    );
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    a.download = `KM_only_${gtin || "export"}_${ts}.${kind}`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  return (
+    <>
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+        <SummaryTile label="KM kodlar" value={result.row_count.toLocaleString()} tone="accent" />
+        <SummaryTile label="Transport kodi ochildi" value={result.transport_count.toLocaleString()} />
+        <SummaryTile label="Ogohlantirishlar" value={result.warnings.length.toLocaleString()} />
+      </div>
+
+      <Card>
+        <CardHead
+          title="KM kodlar (9.3)"
+          right={<>
+            <Badge tone="accent">{result.row_count.toLocaleString()}</Badge>
+            <Button variant="outline" size="sm" onClick={() => download("csv")}>
+              <Download className="size-3" /> CSV
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => download("txt")}>
+              <Download className="size-3" /> TXT
+            </Button>
+          </>}
+        />
+        {result.km_codes.length === 0 ? (
+          <div className="text-muted text-sm italic py-6 text-center">
+            Transport kodlarni ochib bo'lmadi. Filtrni tekshiring yoki 9.1 metodga o'ting.
+          </div>
+        ) : (
+          <div className="rounded-lg border border-border max-h-[520px] overflow-auto">
+            <ul className="divide-y divide-border">
+              {result.km_codes.slice(0, 500).map((c, i) => (
+                <li key={c} className="px-3 py-1.5 flex items-center gap-3">
+                  <span className="text-xs text-muted w-10 shrink-0 text-right">{i + 1}</span>
+                  <span className="font-mono text-xs break-all">{c}</span>
+                </li>
+              ))}
+            </ul>
+            {result.km_codes.length > 500 && (
+              <div className="p-3 text-xs text-muted text-center border-t border-border">
+                Faqat birinchi 500 ta ko'rsatildi. To'liq ro'yxatni CSV yoki TXT dan oling.
+              </div>
+            )}
+          </div>
+        )}
+
+        {result.warnings.length > 0 && (
+          <div className="mt-3 rounded-lg border border-warning/40 bg-warning/5 p-3">
+            <div className="text-xs font-semibold text-warning mb-1">
+              {result.warnings.length} ta transport kodi ochilmadi
+            </div>
+            <div className="text-xs text-muted max-h-32 overflow-auto font-mono">
+              {result.warnings.slice(0, 30).map((w, i) => (
+                <div key={i} className="break-all">{w}</div>
+              ))}
+            </div>
+          </div>
+        )}
+      </Card>
+    </>
   );
 }

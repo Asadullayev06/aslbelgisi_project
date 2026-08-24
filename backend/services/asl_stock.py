@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import io
 import json
+import time
 import zipfile
 from typing import Any
 
@@ -188,6 +189,112 @@ def get_export_result(api_key: str, export_id: str) -> dict:
         }
     except requests.RequestException as e:
         return {"success": False, "error": str(e), "http_status": 0}
+
+
+def expand_transport_to_kms(api_key: str, inn: str, codes: list[str],
+                             sleep_between: float = 0.15) -> dict:
+    """9.3 method — POST /public/api/cod/nested-codes/owner-check.
+
+    Given a list of TRANSPORT codes (SSCC / BOX_LV_*), unpacks each one to
+    its child consumption KMs and returns a de-duped flat list, in input
+    order. Codes that already look like a KM (start with '01') are kept
+    as-is without a network call.
+
+    Rate-limit sleep between calls keeps us well under ASL's 100/min cap
+    even for larger boxes.
+    """
+    seen: set[str] = set()
+    km_out: list[str] = []
+    warnings: list[str] = []
+
+    for i, raw in enumerate(codes):
+        code = (raw or "").strip()
+        if not code:
+            continue
+        # A GTIN-based KM identity starts with AI 01. Anything else is
+        # treated as a transport code and unpacked via 9.3.
+        if code.startswith("01") and len(code) >= 31:
+            if code not in seen:
+                seen.add(code); km_out.append(code)
+            continue
+
+        payload = {"codes": [code], "ownerTin": inn}
+        try:
+            resp = requests.post(
+                f"{_base()}/public/api/cod/nested-codes/owner-check",
+                headers=_headers(api_key),
+                data=json.dumps(payload),
+                timeout=REQUEST_TIMEOUT,
+            )
+        except requests.RequestException as e:
+            warnings.append(f"{code[:20]}…: {e}")
+            continue
+
+        if resp.status_code not in (200, 201):
+            # Try the older shape (no ownerTin) — some accounts serve it
+            try:
+                resp = requests.post(
+                    f"{_base()}/public/api/cod/nested-codes/owner-check",
+                    headers=_headers(api_key),
+                    data=json.dumps({"codes": [code]}),
+                    timeout=REQUEST_TIMEOUT,
+                )
+            except requests.RequestException as e:
+                warnings.append(f"{code[:20]}…: {e}")
+                continue
+
+        if resp.status_code not in (200, 201):
+            warnings.append(f"{code[:20]}… HTTP {resp.status_code}")
+            continue
+
+        try:
+            data = resp.json()
+        except Exception:
+            continue
+
+        for km in _flatten_children(data):
+            if km not in seen:
+                seen.add(km); km_out.append(km)
+
+        if i < len(codes) - 1 and sleep_between > 0:
+            time.sleep(sleep_between)
+
+    return {"success": True, "km_codes": km_out, "warnings": warnings}
+
+
+def _flatten_children(payload: Any) -> list[str]:
+    """Walk the nested-codes response and pull out every UNIT-level KM.
+
+    ASL sometimes returns child arrays under any of these keys:
+      childCodes / children / nestedCodes / consumptionCodes / codes.
+    """
+    out: list[str] = []
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            for k in ("childCodes", "children", "nestedCodes",
+                      "consumptionCodes", "codes"):
+                child = node.get(k)
+                if isinstance(child, list):
+                    for c in child:
+                        walk(c)
+            # A leaf KM node — pick up the code string
+            for k in ("code", "consumerCode", "consumptionCode", "cis"):
+                v = node.get(k)
+                if isinstance(v, str) and v.startswith("01") and len(v) >= 31:
+                    out.append(v)
+                    return
+        elif isinstance(node, list):
+            for x in node:
+                walk(x)
+        elif isinstance(node, str):
+            if node.startswith("01") and len(node) >= 31:
+                out.append(node)
+    # Response shape: {"success": true, "data": {...}} usually.
+    root = payload
+    if isinstance(root, dict) and "data" in root:
+        root = root["data"]
+    walk(root)
+    return out
 
 
 def parse_export_zip(zip_bytes: bytes) -> dict:

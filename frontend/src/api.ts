@@ -295,6 +295,14 @@ export const api = {
   stockResult: (export_id: string, api_key: string, product_series: string) =>
     req<StockResultResp>(`/api/gtin-stock/exports/${export_id}/result`,
       { method: "POST", body: JSON.stringify({ api_key, product_series }) }),
+  /** 9.3 method — unpack every transport code from the export into its
+   *  consumption KMs. Returns only a flat KM code list. */
+  stockKmOnly: (export_id: string, api_key: string, inn: string, product_series: string) =>
+    req<{ ok: boolean; export_id: string; km_codes: string[];
+          row_count: number; transport_count: number;
+          warnings: string[]; fetched_at: string; error: string }>(
+      `/api/gtin-stock/exports/${export_id}/km-only`,
+      { method: "POST", body: JSON.stringify({ api_key, inn, product_series }) }),
 
   // Inspector
   inspectorLookup: (inn: string, api_key: string, codes: string[]) =>
