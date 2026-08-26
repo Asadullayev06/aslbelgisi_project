@@ -23,7 +23,7 @@
    Cream/paper background, warm ink text, deep-green accent, purple/
    amber/terracotta as secondary accents. */
 :root.light {
-  --bg:         38 33% 93%;    /* #F4EFE6  paper */
+  --bg:         36 20% 97%;    /* #FAF7F2  soft off-white paper */
   --surface:    45 71% 97%;    /* #FFFBF2  warmer white */
   --surface-2:  41 33% 89%;    /* #EEE7D7  soft cream */
   --border:     40 27% 82%;    /* #DCD4C2 */
