@@ -1,4 +1,4 @@
-import { useMemo, useState, useRef } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { ArrowLeft, Play, Upload, Sparkles, PackageOpen, PackageCheck } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHead } from "@/components/ui/Card";
@@ -6,6 +6,7 @@ import { Field, Input, Textarea } from "@/components/ui/Input";
 import { Badge } from "@/components/ui/Badge";
 import { Toaster, useFlashes } from "@/components/ui/Toast";
 import { api } from "@/api";
+import type { ProjectSummary } from "@/types";
 
 interface Props {
   onCreated: (projectId: number) => void;
@@ -15,12 +16,22 @@ interface Props {
    *  in the same group. */
   presetName?: string;
   presetProduct?: string;
+  /** When true, admin picks the (name, product) pair from a dropdown of
+   *  existing loyihas instead of typing them. Rules out typos that would
+   *  accidentally spawn a new product group. Ignored if preset* is set. */
+  pickFromExisting?: boolean;
 }
 
-export function Setup({ onCreated, onCancel, presetName, presetProduct }: Props) {
+export function Setup({ onCreated, onCancel, presetName, presetProduct, pickFromExisting }: Props) {
   const isAdditional = !!(presetName || presetProduct);
   const [name, setName]                     = useState(presetName || "");
   const [productName, setProductName]       = useState(presetProduct || "");
+  // Dropdown mode only: list of existing (name, product) pairs plus, per pair,
+  // the series strings already in that group (for the duplicate warning).
+  const [existing, setExisting]             = useState<
+    { name: string; product_name: string; series: string[] }[] | null
+  >(null);
+  const [pickedKey, setPickedKey]           = useState<string>("");
   const [totalBoxes, setTotalBoxes]         = useState<number>(42);
   const [perBox, setPerBox]                 = useState<number>(240);
   const [hasLoose, setHasLoose]             = useState<boolean>(true);
@@ -33,6 +44,42 @@ export function Setup({ onCreated, onCancel, presetName, presetProduct }: Props)
 
   const kmFileRef  = useRef<HTMLInputElement>(null);
   const boxFileRef = useRef<HTMLInputElement>(null);
+
+  // Dropdown mode: load the existing loyihas once so admin can pick one.
+  useEffect(() => {
+    if (!pickFromExisting || isAdditional) return;
+    let cancelled = false;
+    api.listProjects().then((rows: ProjectSummary[]) => {
+      if (cancelled) return;
+      const groups = new Map<string, { name: string; product_name: string; series: string[] }>();
+      for (const p of rows) {
+        const key = `${p.name}::${p.product_name}`;
+        let g = groups.get(key);
+        if (!g) { g = { name: p.name, product_name: p.product_name, series: [] }; groups.set(key, g); }
+        if (p.series) g.series.push(p.series);
+      }
+      const list = Array.from(groups.values())
+                        .sort((a, b) => a.name.localeCompare(b.name));
+      setExisting(list);
+    }).catch(() => setExisting([]));
+    return () => { cancelled = true; };
+  }, [pickFromExisting, isAdditional]);
+
+  // Series already used inside the picked product group — surfaces a client-
+  // side warning if the admin retypes one instead of a new batch code.
+  const pickedGroup = useMemo(() => {
+    if (!pickFromExisting || !pickedKey || !existing) return null;
+    return existing.find(g => `${g.name}::${g.product_name}` === pickedKey) || null;
+  }, [existing, pickedKey, pickFromExisting]);
+  const seriesClash = !!(pickedGroup && series.trim() && pickedGroup.series.includes(series.trim()));
+
+  function onPickExisting(key: string) {
+    setPickedKey(key);
+    const g = existing?.find(x => `${x.name}::${x.product_name}` === key);
+    if (g) { setName(g.name); setProductName(g.product_name); }
+    else   { setName(""); setProductName(""); }
+  }
+  const dropdownLocked = pickFromExisting && !!pickedKey;
 
   const fullBoxes  = Math.max(0, totalBoxes - (hasLoose ? 1 : 0));
   const plannedKm  = fullBoxes * perBox + (hasLoose ? looseQty : 0);
@@ -68,12 +115,20 @@ export function Setup({ onCreated, onCancel, presetName, presetProduct }: Props)
   }
 
   async function submit() {
+    if (pickFromExisting && !pickedKey) {
+      push("err", "Mavjud mahsulotni ro'yxatdan tanlang yoki 'Yangi loyiha' bosing");
+      return;
+    }
     if (!name.trim() || !productName.trim()) {
       push("err", "Loyiha nomi va mahsulot to'ldirilishi kerak");
       return;
     }
     if (!series.trim()) {
       push("err", "Seriya (batch) kiritilishi shart");
+      return;
+    }
+    if (seriesClash) {
+      push("err", `Seriya "${series.trim()}" bu mahsulotda allaqachon mavjud`);
       return;
     }
     setBusy(true);
@@ -103,12 +158,16 @@ export function Setup({ onCreated, onCancel, presetName, presetProduct }: Props)
         </button>
         <div className="text-right">
           <div className="text-3xl font-extrabold tracking-tight text-accent">
-            {isAdditional ? "Yangi seriya" : "Yangi loyiha"}
+            {isAdditional || pickFromExisting ? "Yangi seriya" : "Yangi loyiha"}
           </div>
           <div className="text-muted text-sm">
             {isAdditional
               ? <>Mahsulot: <b className="text-text">{presetName}</b> — yangi seriyaning ma'lumotlarini kiriting</>
-              : "Sozlash — barcha ma'lumotlarni bir marta kiriting"}
+              : pickFromExisting
+                ? (dropdownLocked
+                    ? <>Mahsulot: <b className="text-text">{name}</b> — yangi seriyaning ma'lumotlarini kiriting</>
+                    : "Mavjud mahsulotni tanlang, so'ng yangi seriyani sozlang")
+                : "Sozlash — barcha ma'lumotlarni bir marta kiriting"}
           </div>
         </div>
       </div>
@@ -116,24 +175,63 @@ export function Setup({ onCreated, onCancel, presetName, presetProduct }: Props)
       <Card className="mb-4">
         <CardHead title="Loyiha ma'lumotlari" right={<Badge tone="warning"><Sparkles className="size-3" /> Sozlash</Badge>} />
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Field label={isAdditional ? "Loyiha nomi (mahsulotdan olindi)" : "Loyiha nomi"}>
-            <Input value={name} onChange={e => setName(e.target.value)}
-                   placeholder="masalan: Salbucort 2026-Q3"
-                   disabled={isAdditional} />
-          </Field>
-          <Field label={isAdditional ? "Mahsulot nomi (mahsulotdan olindi)" : "Mahsulot nomi"}>
-            <Input value={productName} onChange={e => setProductName(e.target.value)}
-                   placeholder="masalan: Salbucort 250mg"
-                   disabled={isAdditional} />
-          </Field>
-        </div>
+        {pickFromExisting && !isAdditional ? (
+          <div className="grid grid-cols-1 gap-4">
+            <Field label="Mavjud mahsulotni tanlang *"
+                   hint="Xato yozib qo'yish oldini olish uchun ro'yxatdan tanlang">
+              <select
+                value={pickedKey}
+                onChange={e => onPickExisting(e.target.value)}
+                className="h-11 w-full rounded-lg border border-border bg-surface px-3 text-sm
+                           focus:border-accent focus:ring-2 focus:ring-accent/30 outline-none"
+              >
+                <option value="">— tanlang —</option>
+                {existing === null && <option disabled>Yuklanmoqda…</option>}
+                {existing && existing.length === 0 && (
+                  <option disabled>Hali birorta mahsulot yaratilmagan</option>
+                )}
+                {existing?.map(g => (
+                  <option key={`${g.name}::${g.product_name}`}
+                          value={`${g.name}::${g.product_name}`}>
+                    {g.name} — {g.product_name} ({g.series.length} seriya)
+                  </option>
+                ))}
+              </select>
+            </Field>
+            {dropdownLocked && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <Field label="Loyiha nomi (mahsulotdan olindi)">
+                  <Input value={name} disabled />
+                </Field>
+                <Field label="Mahsulot nomi (mahsulotdan olindi)">
+                  <Input value={productName} disabled />
+                </Field>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Field label={isAdditional ? "Loyiha nomi (mahsulotdan olindi)" : "Loyiha nomi"}>
+              <Input value={name} onChange={e => setName(e.target.value)}
+                     placeholder="masalan: Salbucort 2026-Q3"
+                     disabled={isAdditional} />
+            </Field>
+            <Field label={isAdditional ? "Mahsulot nomi (mahsulotdan olindi)" : "Mahsulot nomi"}>
+              <Input value={productName} onChange={e => setProductName(e.target.value)}
+                     placeholder="masalan: Salbucort 250mg"
+                     disabled={isAdditional} />
+            </Field>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
           <Field label="Seriya (batch) *"
-                 hint="ishlab chiqarish partiyasi — Kod Qidiruv sahifasida ko'rinadi">
+                 hint={seriesClash
+                    ? "Bu seriya shu mahsulotda allaqachon mavjud — boshqasini kiriting"
+                    : "ishlab chiqarish partiyasi — Kod Qidiruv sahifasida ko'rinadi"}>
             <Input value={series} onChange={e => setSeries(e.target.value)}
-                   placeholder="masalan: L2026-05-A" />
+                   placeholder="masalan: L2026-05-A"
+                   className={seriesClash ? "border-danger focus:border-danger focus:ring-danger/30" : ""} />
           </Field>
         </div>
 

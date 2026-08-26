@@ -24,7 +24,7 @@ type Route =
   | { kind: "home" }
   | { kind: "modeChooser" }                 // NEW: agg vs inventory
   | { kind: "picker" }                       // aggregation projects
-  | { kind: "setup"; presetName?: string; presetProduct?: string }
+  | { kind: "setup"; presetName?: string; presetProduct?: string; pickFromExisting?: boolean }
   | { kind: "scan"; projectId: number }
   | { kind: "invPicker" }                    // NEW: inventory projects
   | { kind: "invSetup" }                     // NEW
@@ -94,7 +94,8 @@ function Shell({ route, setRoute }: {
     return <Setup onCreated={id => setRoute({ kind: "scan", projectId: id })}
                   onCancel={() => setRoute({ kind: "picker" })}
                   presetName={route.presetName}
-                  presetProduct={route.presetProduct} />;
+                  presetProduct={route.presetProduct}
+                  pickFromExisting={route.pickFromExisting} />;
   }
   if (route.kind === "scan") {
     return <Scan projectId={route.projectId} onExit={() => setRoute({ kind: "picker" })} />;
@@ -114,6 +115,7 @@ function Shell({ route, setRoute }: {
   if (route.kind === "picker") {
     return <Picker onOpen={id => setRoute({ kind: "scan", projectId: id })}
                    onNew={() => setRoute({ kind: "setup" })}
+                   onNewSeriesPick={() => setRoute({ kind: "setup", pickFromExisting: true })}
                    onNewSeries={(name, productName) =>
                      setRoute({ kind: "setup",
                                 presetName: name,
@@ -664,9 +666,10 @@ function groupByProduct(projects: ProjectSummary[]) {
 }
 
 
-function Picker({ onOpen, onNew, onNewSeries, onHome }: {
+function Picker({ onOpen, onNew, onNewSeriesPick, onNewSeries, onHome }: {
   onOpen: (id: number) => void;
   onNew: () => void;
+  onNewSeriesPick: () => void;
   onNewSeries: (name: string, productName: string) => void;
   onHome: () => void;
 }) {
@@ -696,7 +699,10 @@ function Picker({ onOpen, onNew, onNewSeries, onHome }: {
             Mahsulotni tanlang → seriyani tanlang → skanerlashni boshlang
           </div>
         </div>
-        <NewProjectButton onClick={onNew} />
+        <div className="flex items-center gap-2">
+          <NewSeriesTopButton onClick={onNewSeriesPick} disabled={(projects?.length ?? 0) === 0} />
+          <NewProjectButton onClick={onNew} />
+        </div>
       </div>
 
       <Card>
@@ -790,6 +796,19 @@ function NewProjectButton({ onClick }: { onClick: () => void }) {
   return (
     <Button variant="primary" size="lg" onClick={onClick}>
       <Plus className="size-4" /> Yangi loyiha
+    </Button>
+  );
+}
+
+/** Top-right "add a series to an existing product" button. Admin-only.
+ *  Disabled when there is no existing loyiha yet — nothing to pick from. */
+function NewSeriesTopButton({ onClick, disabled }: { onClick: () => void; disabled?: boolean }) {
+  const { user } = useAuth();
+  if (!isAdmin(user)) return null;
+  return (
+    <Button variant="outline" size="lg" onClick={onClick} disabled={disabled}
+            title={disabled ? "Avval yangi loyiha yarating" : "Mavjud mahsulotga yangi seriya qo'shish"}>
+      <Plus className="size-4" /> Yangi seriya qo'shish
     </Button>
   );
 }
