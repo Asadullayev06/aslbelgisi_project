@@ -24,9 +24,9 @@
    amber/terracotta as secondary accents. */
 :root.light {
   --bg:         36 20% 97%;    /* #FAF7F2  soft off-white paper */
-  --surface:    45 71% 97%;    /* #FFFBF2  warmer white */
-  --surface-2:  41 33% 89%;    /* #EEE7D7  soft cream */
-  --border:     40 27% 82%;    /* #DCD4C2 */
+  --surface:    40 33% 99%;    /* near-white with faint warmth */
+  --surface-2:  38 20% 94%;    /* subtle cream, close to --bg but distinct */
+  --border:     38 16% 85%;    /* softer, less amber */
   --text:       24 10% 10%;    /* #1B1815  warm ink */
   --muted:      30 11% 38%;    /* #6B6255 */
   --accent:     159 40% 30%;   /* #2F6E5A  login green */
