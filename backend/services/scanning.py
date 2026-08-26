@@ -76,6 +76,30 @@ def _open_box_count(sess: Session, open_box_id: int) -> int:
     ).scalar_one())
 
 
+def _has_km_pool(sess: Session, project_id: int) -> bool:
+    """True when the admin pre-uploaded a KM manifest for this project.
+
+    An "open" (no-manifest) project accepts any KM the scanner reads — the
+    code is auto-registered as we go, so the ordinary claim/dedupe path
+    still fires but we never reject a code just for being 'not in list'.
+    Duplicates are still refused.
+    """
+    return sess.execute(
+        select(KmPool.id).where(KmPool.project_id == project_id).limit(1)
+    ).scalar_one_or_none() is not None
+
+
+def _has_box_pool(sess: Session, project_id: int) -> bool:
+    """True when the admin pre-uploaded an SSCC manifest for this project.
+
+    An "open" SSCC pool means any SSCC closes the box, as long as it isn't
+    already the label of another closed box in this project.
+    """
+    return sess.execute(
+        select(BoxPool.id).where(BoxPool.project_id == project_id).limit(1)
+    ).scalar_one_or_none() is not None
+
+
 def _effective_capacity(project: Project, open_box: OpenBox) -> int:
     return project.loose_qty if open_box.is_loose else project.per_box
 
@@ -94,8 +118,14 @@ def scan_code(sess: Session, project_id: int, user_id: int, raw: str,
     return scan_batch(sess, project_id, user_id, [raw], attempt=attempt)[0]
 
 
-def _scan_sscc(sess: Session, project_id: int, user_id: int, sscc: str) -> dict:
-    """Close the operator's open box using this SSCC. Serialized on project row."""
+def _scan_sscc(sess: Session, project_id: int, user_id: int, sscc: str,
+               box_open: bool = False) -> dict:
+    """Close the operator's open box using this SSCC. Serialized on project row.
+
+    `box_open=True` means the admin didn't upload an SSCC manifest at
+    project creation — any SSCC is accepted (subject to the usual "not
+    already used as a Box in this project" collision check).
+    """
     project = sess.execute(
         select(Project).where(Project.id == project_id).with_for_update()
     ).scalar_one_or_none()
@@ -120,6 +150,16 @@ def _scan_sscc(sess: Session, project_id: int, user_id: int, sscc: str) -> dict:
     cap = _effective_capacity(project, ob)
     if n < cap:
         return _err(f"quti hali to'lmagan ({n}/{cap}). KM skanerlashda davom eting.")
+
+    # OPEN pool: auto-register the SSCC as pending before we try to claim
+    # it. If a Box row already exists for this SSCC, the Box uniqueness
+    # index (uq_boxes_project_sscc) catches the duplicate below.
+    if box_open:
+        sess.execute(
+            pg_insert(BoxPool)
+            .values(project_id=project_id, sscc=sscc, status="pending")
+            .on_conflict_do_nothing(index_elements=["project_id", "sscc"])
+        )
 
     # Claim SSCC atomically.
     got = sess.execute(
@@ -212,12 +252,19 @@ def _record_events(sess: Session, project_id: int, user_id: int,
 
 def _claim_km_run(sess: Session, project: Project, user_id: int, ob: OpenBox,
                   run: list[tuple[int, str, str]], results: list[Optional[dict]],
-                  attempt: int) -> None:
+                  attempt: int, km_open: bool = False) -> None:
     """Claim a consecutive run of KM codes for one open box.
 
     `run` is [(result_index, raw, canonical_km)] in scan order. Fills
     `results` in place. Costs one UPDATE plus, only if something failed, one
     diagnostic SELECT — instead of two statements per code.
+
+    `km_open=True` — the project has NO uploaded KM manifest. Before the
+    UPDATE we bulk-INSERT a pending row for every code the pool doesn't
+    already know about (ON CONFLICT DO NOTHING preserves any existing
+    status). The rest of the flow is unchanged: the same UPDATE claims
+    them, and the diagnostic query still names 'already claimed / in
+    another box / this box' correctly, so duplicate protection is intact.
     """
     cap   = _effective_capacity(project, ob)
     count = _open_box_count(sess, ob.id)
@@ -232,6 +279,19 @@ def _claim_km_run(sess: Session, project: Project, user_id: int, ob: OpenBox,
         else:
             seen.add(km)
             todo.append((idx, raw, km))
+
+    # OPEN pool: auto-register any scanned code that isn't yet in km_pool.
+    # Existing rows (of any status) are left as-is so the diagnostic below
+    # still correctly rejects duplicates that are aggregated or claimed by
+    # another operator.
+    if km_open and todo:
+        sess.execute(
+            pg_insert(KmPool)
+            .values([{"project_id": project.id, "km_code": km, "series": "",
+                      "status": "pending"} for (_, _, km) in todo])
+            .on_conflict_do_nothing(
+                index_elements=["project_id", "km_code", "series"])
+        )
 
     failed: list[tuple[int, str, str]] = []
     pos = 0
@@ -345,6 +405,14 @@ def scan_batch(sess: Session, project_id: int, user_id: int,
     ob = _get_or_create_open_box(sess, project_id, user_id, lock=True)
     is_inventory = (project.mode == "inventory")
 
+    # For aggregation projects, admin can now create the loyiha without
+    # pre-uploading the KM list, the SSCC list, or either. The flags are
+    # set ONCE at create time — reading them here instead of counting rows
+    # so that codes auto-registered by earlier scans don't flip the pool
+    # back to strict mode.
+    km_open  = (not is_inventory) and bool(getattr(project, "open_km_pool", False))
+    box_open = (not is_inventory) and bool(getattr(project, "open_box_pool", False))
+
     run: list[tuple[int, str, str]] = []
     for idx, kind, raw, code in parsed:
         if kind == "km":
@@ -354,12 +422,14 @@ def scan_batch(sess: Session, project_id: int, user_id: int,
             if is_inventory:
                 _inv_claim_run(sess, project, user_id, ob, run, results, attempt)
             else:
-                _claim_km_run(sess, project, user_id, ob, run, results, attempt)
+                _claim_km_run(sess, project, user_id, ob, run, results, attempt,
+                              km_open=km_open)
             run = []
         if is_inventory:
             results[idx] = _inv_scan_sscc(sess, project_id, user_id, code)
         else:
-            results[idx] = _scan_sscc(sess, project_id, user_id, code)
+            results[idx] = _scan_sscc(sess, project_id, user_id, code,
+                                      box_open=box_open)
         # The box was consumed (or the close failed); either way re-resolve it
         # before any further KMs are claimed.
         ob = _get_or_create_open_box(sess, project_id, user_id, lock=True)
@@ -367,7 +437,8 @@ def scan_batch(sess: Session, project_id: int, user_id: int,
         if is_inventory:
             _inv_claim_run(sess, project, user_id, ob, run, results, attempt)
         else:
-            _claim_km_run(sess, project, user_id, ob, run, results, attempt)
+            _claim_km_run(sess, project, user_id, ob, run, results, attempt,
+                          km_open=km_open)
 
     final = [r if r is not None else _err("qayta ishlanmadi") for r in results]
     _record_events(sess, project_id, user_id, [

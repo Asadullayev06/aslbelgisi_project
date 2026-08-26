@@ -88,19 +88,20 @@ def create_project(
         raise HTTPException(400, "total_boxes noto'g'ri")
     planned_km = full_boxes * body.per_box + (body.loose_qty if body.has_loose else 0)
 
+    # Empty pools are now ALLOWED — an "open" project. The scanning path
+    # detects the missing pool per-project and auto-registers codes on the
+    # fly, so admin can create a project without pre-loading anything and
+    # workers simply scan whatever they have; duplicates are still rejected.
+    # If a pool WAS provided, we still verify its size matches the plan.
     errors: list[str] = []
-    if not km_codes:
-        errors.append("KM ro'yxati bo'sh")
-    elif len(km_codes) < planned_km:
+    if km_codes and len(km_codes) < planned_km:
         errors.append(
             f"KM yetarli emas: {len(km_codes)} berildi, reja {planned_km} "
             f"({full_boxes} to'liq × {body.per_box}"
             + (f" + {body.loose_qty} loose" if body.has_loose else "")
             + ")"
         )
-    if not box_codes:
-        errors.append("Quti (SSCC) ro'yxati bo'sh")
-    elif len(box_codes) < body.total_boxes:
+    if box_codes and len(box_codes) < body.total_boxes:
         errors.append(f"Quti kodlari yetarli emas: {len(box_codes)} berildi, "
                       f"reja {body.total_boxes}")
     if errors:
@@ -120,6 +121,10 @@ def create_project(
         business_place_id=body.business_place_id.strip(),      # can be empty — set at submit time
         production_order_id=body.production_order_id.strip(),
         status="active",
+        # Stay in "open" mode forever if no manifest was uploaded — the
+        # scan path auto-registers unknown codes for these projects.
+        open_km_pool=not km_codes,
+        open_box_pool=not box_codes,
         created_by=u.id,
     )
     sess.add(project)

@@ -61,6 +61,13 @@ class Project(Base):
     # inventory   = warehouse counting: multiple series per project, free-form
     #               box sizes, extras allowed, never submitted to ASL.
     mode:                Mapped[str]      = mapped_column(Text, nullable=False, default="aggregation")
+    # "Open" pools: admin created the aggregation project without uploading
+    # the KM (or SSCC) manifest. Scans of unknown codes get auto-registered
+    # rather than rejected as 'not in list'; duplicates still refuse. Set
+    # ONCE at create time so later auto-registered rows don't flip the mode
+    # back to strict.
+    open_km_pool:        Mapped[bool]     = mapped_column(Boolean, nullable=False, default=False)
+    open_box_pool:       Mapped[bool]     = mapped_column(Boolean, nullable=False, default=False)
     status:              Mapped[str]      = mapped_column(Text, nullable=False, default="active")
     created_by:          Mapped[Optional[int]] = mapped_column(BigInteger,
                                                     ForeignKey("users.id", ondelete="SET NULL"),

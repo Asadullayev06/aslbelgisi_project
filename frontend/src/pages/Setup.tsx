@@ -164,14 +164,23 @@ export function Setup({ onCreated, onCancel }: Props) {
         </div>
       </Card>
 
+      <div className="mb-3 rounded-lg border border-border bg-surface2/40 p-3 text-xs text-muted">
+        <b className="text-text">Ikkalasi ham ixtiyoriy.</b>{" "}
+        Agar KM ro'yxati yuklansangiz — skanerlashda faqat ro'yxatdagi
+        kodlar qabul qilinadi. Agar SSCC ro'yxati yuklansangiz — quti
+        yopilganda faqat ro'yxatdagi SSCC ishlaydi. Bo'sh qoldirsangiz —
+        istalgan kod qabul qilinadi (takrorlar baribir rad etiladi).
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
           <CardHead
-            title="KM kodlar ro'yxati"
+            title="KM kodlar ro'yxati (ixtiyoriy)"
             right={
               <>
-                <Badge tone={kmLoaded >= plannedKm ? "success" : kmLoaded ? "warning" : "neutral"}>
-                  {kmLoaded} / {plannedKm}
+                <Badge tone={kmLoaded === 0 ? "neutral"
+                              : kmLoaded >= plannedKm ? "success" : "warning"}>
+                  {kmLoaded === 0 ? "ixtiyoriy" : `${kmLoaded} / ${plannedKm}`}
                 </Badge>
                 <Button variant="outline" size="sm"
                         onClick={() => kmFileRef.current?.click()}>
@@ -188,16 +197,17 @@ export function Setup({ onCreated, onCancel }: Props) {
             }
           />
           <Textarea rows={10} value={kmText} onChange={e => setKmText(e.target.value)}
-                    placeholder="Har bir qatorga bitta KM kod. Skaner bilan ham kiritsa bo'ladi." />
+                    placeholder="Bo'sh qoldirsa — istalgan KM qabul qilinadi. Yuklansa — faqat ro'yxatdagilari." />
         </Card>
 
         <Card>
           <CardHead
-            title="Quti (SSCC) kodlari"
+            title="Quti (SSCC) kodlari (ixtiyoriy)"
             right={
               <>
-                <Badge tone={boxLoaded >= totalBoxes ? "success" : boxLoaded ? "warning" : "neutral"}>
-                  {boxLoaded} / {totalBoxes}
+                <Badge tone={boxLoaded === 0 ? "neutral"
+                              : boxLoaded >= totalBoxes ? "success" : "warning"}>
+                  {boxLoaded === 0 ? "ixtiyoriy" : `${boxLoaded} / ${totalBoxes}`}
                 </Badge>
                 <Button variant="outline" size="sm"
                         onClick={() => boxFileRef.current?.click()}>
@@ -214,7 +224,7 @@ export function Setup({ onCreated, onCancel }: Props) {
             }
           />
           <Textarea rows={10} value={boxText} onChange={e => setBoxText(e.target.value)}
-                    placeholder="Har bir qatorga bitta SSCC (18 raqam yoki 00 bilan boshlangan 20)." />
+                    placeholder="Bo'sh qoldirsa — istalgan SSCC ishlaydi. Yuklansa — faqat ro'yxatdagilari." />
         </Card>
       </div>
 
