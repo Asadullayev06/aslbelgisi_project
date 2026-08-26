@@ -131,10 +131,16 @@ def create_project(
     sess.flush()
 
     if km_codes:
+        # KmPool's unique is (project_id, km_code, series) since migration
+        # 0005 — include series explicitly so the ON CONFLICT can find it.
+        # Aggregation projects always use series='' (the empty-string
+        # sentinel), reserved for cross-series duplicates in inventory.
         sess.execute(
             pg_insert(KmPool)
-            .values([{"project_id": project.id, "km_code": c} for c in km_codes])
-            .on_conflict_do_nothing(index_elements=["project_id", "km_code"])
+            .values([{"project_id": project.id, "km_code": c, "series": ""}
+                     for c in km_codes])
+            .on_conflict_do_nothing(
+                index_elements=["project_id", "km_code", "series"])
         )
     if box_codes:
         sess.execute(
