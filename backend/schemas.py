@@ -53,6 +53,7 @@ class ProjectSummary(BaseModel):
     loose_qty: int
     status: str
     mode: str = "aggregation"
+    series: str = ""
     created_at: datetime
 
 

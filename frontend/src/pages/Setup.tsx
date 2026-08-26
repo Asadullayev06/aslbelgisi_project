@@ -10,11 +10,17 @@ import { api } from "@/api";
 interface Props {
   onCreated: (projectId: number) => void;
   onCancel: () => void;
+  /** When present, the admin came here via "Yangi seriya" from an existing
+   *  product group — the name + product are locked to keep the new series
+   *  in the same group. */
+  presetName?: string;
+  presetProduct?: string;
 }
 
-export function Setup({ onCreated, onCancel }: Props) {
-  const [name, setName]                     = useState("");
-  const [productName, setProductName]       = useState("");
+export function Setup({ onCreated, onCancel, presetName, presetProduct }: Props) {
+  const isAdditional = !!(presetName || presetProduct);
+  const [name, setName]                     = useState(presetName || "");
+  const [productName, setProductName]       = useState(presetProduct || "");
   const [totalBoxes, setTotalBoxes]         = useState<number>(42);
   const [perBox, setPerBox]                 = useState<number>(240);
   const [hasLoose, setHasLoose]             = useState<boolean>(true);
@@ -96,8 +102,14 @@ export function Setup({ onCreated, onCancel }: Props) {
           <ArrowLeft className="size-4" /> Ortga
         </button>
         <div className="text-right">
-          <div className="text-3xl font-extrabold tracking-tight text-accent">Yangi loyiha</div>
-          <div className="text-muted text-sm">Sozlash — barcha ma'lumotlarni bir marta kiriting</div>
+          <div className="text-3xl font-extrabold tracking-tight text-accent">
+            {isAdditional ? "Yangi seriya" : "Yangi loyiha"}
+          </div>
+          <div className="text-muted text-sm">
+            {isAdditional
+              ? <>Mahsulot: <b className="text-text">{presetName}</b> — yangi seriyaning ma'lumotlarini kiriting</>
+              : "Sozlash — barcha ma'lumotlarni bir marta kiriting"}
+          </div>
         </div>
       </div>
 
@@ -105,13 +117,15 @@ export function Setup({ onCreated, onCancel }: Props) {
         <CardHead title="Loyiha ma'lumotlari" right={<Badge tone="warning"><Sparkles className="size-3" /> Sozlash</Badge>} />
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Field label="Loyiha nomi">
+          <Field label={isAdditional ? "Loyiha nomi (mahsulotdan olindi)" : "Loyiha nomi"}>
             <Input value={name} onChange={e => setName(e.target.value)}
-                   placeholder="masalan: Salbucort 2026-Q3" />
+                   placeholder="masalan: Salbucort 2026-Q3"
+                   disabled={isAdditional} />
           </Field>
-          <Field label="Mahsulot nomi">
+          <Field label={isAdditional ? "Mahsulot nomi (mahsulotdan olindi)" : "Mahsulot nomi"}>
             <Input value={productName} onChange={e => setProductName(e.target.value)}
-                   placeholder="masalan: Salbucort 250mg" />
+                   placeholder="masalan: Salbucort 250mg"
+                   disabled={isAdditional} />
           </Field>
         </div>
 

@@ -53,6 +53,7 @@ export interface ProjectSummary {
   loose_qty: number;
   status: string;
   mode?: ProjectMode;
+  series?: string;
   created_at: string;
 }
 

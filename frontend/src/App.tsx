@@ -24,7 +24,7 @@ type Route =
   | { kind: "home" }
   | { kind: "modeChooser" }                 // NEW: agg vs inventory
   | { kind: "picker" }                       // aggregation projects
-  | { kind: "setup" }                        // aggregation setup
+  | { kind: "setup"; presetName?: string; presetProduct?: string }
   | { kind: "scan"; projectId: number }
   | { kind: "invPicker" }                    // NEW: inventory projects
   | { kind: "invSetup" }                     // NEW
@@ -92,7 +92,9 @@ function Shell({ route, setRoute }: {
 }) {
   if (route.kind === "setup") {
     return <Setup onCreated={id => setRoute({ kind: "scan", projectId: id })}
-                  onCancel={() => setRoute({ kind: "picker" })} />;
+                  onCancel={() => setRoute({ kind: "picker" })}
+                  presetName={route.presetName}
+                  presetProduct={route.presetProduct} />;
   }
   if (route.kind === "scan") {
     return <Scan projectId={route.projectId} onExit={() => setRoute({ kind: "picker" })} />;
@@ -112,6 +114,10 @@ function Shell({ route, setRoute }: {
   if (route.kind === "picker") {
     return <Picker onOpen={id => setRoute({ kind: "scan", projectId: id })}
                    onNew={() => setRoute({ kind: "setup" })}
+                   onNewSeries={(name, productName) =>
+                     setRoute({ kind: "setup",
+                                presetName: name,
+                                presetProduct: productName })}
                    onHome={() => setRoute({ kind: "modeChooser" })} />;
   }
   if (route.kind === "modeChooser") {
@@ -472,17 +478,210 @@ function ProjectRow({ p, tone, icon, onOpen, onChanged }: {
 }
 
 
-function Picker({ onOpen, onNew, onHome }: {
-  onOpen: (id: number) => void; onNew: () => void; onHome: () => void;
+/** One product's card in the picker: header shows the product + series
+ *  count, click expands to show each series (project) inside, plus a
+ *  "+ Yangi seriya" button that opens Setup with the product name locked. */
+function ProductGroupRow({ group, isOpen, submittedCount, onToggle, onOpen,
+                            onAddSeries, onChanged }: {
+  group: { name: string; productName: string; projects: ProjectSummary[] };
+  isOpen: boolean;
+  submittedCount: number;
+  onToggle: () => void;
+  onOpen: (id: number) => void;
+  onAddSeries: () => void;
+  onChanged: () => void;
+}) {
+  const { user } = useAuth();
+  const admin = isAdmin(user);
+  return (
+    <div className="rounded-xl border border-border bg-surface2/40 overflow-hidden hover:border-accent/40 transition-colors">
+      <button
+        onClick={onToggle}
+        className="w-full text-left p-4 hover:bg-surface2/70 transition-colors"
+      >
+        <div className="flex items-center justify-between gap-2 mb-1">
+          <div className="flex items-center gap-2 min-w-0">
+            <Boxes className="size-4 text-accent shrink-0" />
+            <span className="font-semibold truncate">{group.name}</span>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <Badge tone="accent">{group.projects.length} seriya</Badge>
+            {submittedCount > 0 && (
+              <Badge tone="success">{submittedCount} yuborilgan</Badge>
+            )}
+          </div>
+        </div>
+        <div className="text-sm text-muted truncate">{group.productName}</div>
+        <div className="text-xs text-muted/80 mt-1">
+          {isOpen ? "Yopish" : "Seriyalarni ochish"}
+        </div>
+      </button>
+
+      {isOpen && (
+        <div className="border-t border-border bg-surface/40 p-3 flex flex-col gap-2">
+          {group.projects.map(p => (
+            <SeriesRow key={p.id} p={p} onOpen={onOpen} onChanged={onChanged} />
+          ))}
+          {admin && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onAddSeries(); }}
+              className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-accent/40
+                         text-accent px-3 py-2 text-sm font-semibold hover:bg-accent/10 transition-colors"
+            >
+              <Plus className="size-4" /> Yangi seriya qo'shish
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+/** Compact row for one series inside a product group. Reuses the existing
+ *  admin controls (rename / delete) via ProjectRow, but rendered inline. */
+function SeriesRow({ p, onOpen, onChanged }: {
+  p: ProjectSummary;
+  onOpen: (id: number) => void;
+  onChanged: () => void;
+}) {
+  const { user } = useAuth();
+  const admin = isAdmin(user);
+  return (
+    <div className="group relative rounded-lg border border-border bg-surface2/40 hover:bg-surface2/70 hover:border-accent/40 transition-colors">
+      <button onClick={() => onOpen(p.id)}
+              className="w-full text-left px-3 py-2">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0 text-sm">
+            <span className="font-mono text-muted shrink-0">seriya:</span>
+            <span className="font-semibold truncate">{p.series || "—"}</span>
+          </div>
+          <Badge tone={p.status === "submitted" ? "success"
+                        : p.status === "submitting" ? "warning" : "accent"}>
+            {p.status}
+          </Badge>
+        </div>
+        <div className="mt-1 text-[11px] text-muted flex gap-3">
+          <span>Qutilar: <b className="text-text">{p.total_boxes}</b></span>
+          <span>Har birida: <b className="text-text">{p.per_box}</b></span>
+          {p.has_loose && <span>Loose: <b className="text-text">{p.loose_qty}</b></span>}
+        </div>
+      </button>
+      {admin && (
+        <div className="absolute top-1.5 right-1.5 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          <ProjectAdminActions p={p} onChanged={onChanged} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+/** Admin pencil + trash split out from ProjectRow so SeriesRow can reuse it. */
+function ProjectAdminActions({ p, onChanged }: {
+  p: ProjectSummary; onChanged: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(p.name);
+  const [productName, setProductName] = useState(p.product_name);
+  const [busy, setBusy] = useState(false);
+
+  async function save() {
+    setBusy(true);
+    try {
+      await api.updateProject(p.id, { name: name.trim(), product_name: productName.trim() });
+      setEditing(false);
+      onChanged();
+    } catch (e: any) { alert(String(e.message || e)); }
+    setBusy(false);
+  }
+  async function del(e: React.MouseEvent) {
+    e.stopPropagation();
+    const warn = p.status === "submitted"
+      ? `Bu seriya (${p.series || p.name}) ASL ga yuborilgan. Butunlay o'chiramizmi?`
+      : `Bu seriyani (${p.series || p.name}) butunlay o'chiramizmi? Bu amal ortga qaytmaydi.`;
+    if (!confirm(warn)) return;
+    setBusy(true);
+    try { await api.deleteProject(p.id); onChanged(); }
+    catch (e: any) { alert(String(e.message || e)); }
+    setBusy(false);
+  }
+  if (editing) {
+    return (
+      <div className="absolute right-1.5 top-1.5 z-10 flex flex-col gap-1 rounded-lg border border-accent/50 bg-surface p-2 shadow-lg w-64">
+        <Input value={name} onChange={e => setName(e.target.value)} placeholder="Loyiha nomi" />
+        <Input value={productName} onChange={e => setProductName(e.target.value)} placeholder="Mahsulot nomi" />
+        <div className="flex gap-1 justify-end">
+          <Button variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); setEditing(false); setName(p.name); setProductName(p.product_name); }}>
+            <X className="size-3" />
+          </Button>
+          <Button variant="primary" size="sm" onClick={(e) => { e.stopPropagation(); save(); }} disabled={busy || !name.trim() || !productName.trim()}>
+            <Check className="size-3" />
+          </Button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <>
+      <button onClick={(e) => { e.stopPropagation(); setEditing(true); }}
+              title="Tahrirlash"
+              className="p-1.5 rounded-md bg-surface/80 border border-border hover:border-accent/60 hover:text-accent">
+        <Pencil className="size-3.5" />
+      </button>
+      <button onClick={del} disabled={busy}
+              title="O'chirish"
+              className="p-1.5 rounded-md bg-surface/80 border border-border hover:border-danger/60 hover:text-danger">
+        <Trash2 className="size-3.5" />
+      </button>
+    </>
+  );
+}
+
+
+/** Group projects that share (name, product_name). Each group is one
+ *  "product" the operator picks first; series live inside as siblings. */
+function groupByProduct(projects: ProjectSummary[]) {
+  const groups = new Map<string, { name: string; productName: string;
+                                    projects: ProjectSummary[] }>();
+  for (const p of projects) {
+    const key = `${p.name}::${p.product_name}`;
+    let g = groups.get(key);
+    if (!g) {
+      g = { name: p.name, productName: p.product_name, projects: [] };
+      groups.set(key, g);
+    }
+    g.projects.push(p);
+  }
+  // stable order — newest project in each group first, groups by newest
+  // project overall
+  for (const g of groups.values()) {
+    g.projects.sort((a, b) => b.id - a.id);
+  }
+  return Array.from(groups.values()).sort(
+    (a, b) => b.projects[0].id - a.projects[0].id
+  );
+}
+
+
+function Picker({ onOpen, onNew, onNewSeries, onHome }: {
+  onOpen: (id: number) => void;
+  onNew: () => void;
+  onNewSeries: (name: string, productName: string) => void;
+  onHome: () => void;
 }) {
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // Which product group is currently expanded to show its series list.
+  const [openKey, setOpenKey] = useState<string | null>(null);
 
   const load = () => {
     setErr(null);
     api.listProjects().then(setProjects).catch(e => setErr(String(e)));
   };
   useEffect(load, []);
+
+  const groups = projects ? groupByProduct(projects) : [];
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-10">
@@ -494,14 +693,15 @@ function Picker({ onOpen, onNew, onHome }: {
         <div>
           <div className="text-3xl font-extrabold tracking-tight text-accent">Agregatsiya loyihalari</div>
           <div className="text-muted text-sm mt-1">
-            Skanerlashni boshlash uchun loyihani tanlang
+            Mahsulotni tanlang → seriyani tanlang → skanerlashni boshlang
           </div>
         </div>
         <NewProjectButton onClick={onNew} />
       </div>
 
       <Card>
-        <CardHead title="Faol loyihalar" right={<Badge tone="neutral">{projects?.length ?? 0}</Badge>} />
+        <CardHead title="Mahsulotlar"
+                  right={<Badge tone="neutral">{groups.length}</Badge>} />
         {err && (
           <div className="rounded-lg border border-danger/40 bg-danger/10 p-3 text-sm text-danger">
             {err}
@@ -514,11 +714,21 @@ function Picker({ onOpen, onNew, onHome }: {
           </div>
         )}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {projects?.map(p => (
-            <ProjectRow key={p.id} p={p} tone="accent"
-                        icon={<Boxes className="size-4 text-accent" />}
-                        onOpen={onOpen} onChanged={load} />
-          ))}
+          {groups.map(g => {
+            const key = `${g.name}::${g.productName}`;
+            const isOpen = openKey === key;
+            const submittedCount = g.projects.filter(p => p.status === "submitted").length;
+            return (
+              <ProductGroupRow key={key}
+                               group={g}
+                               isOpen={isOpen}
+                               submittedCount={submittedCount}
+                               onToggle={() => setOpenKey(isOpen ? null : key)}
+                               onOpen={onOpen}
+                               onAddSeries={() => onNewSeries(g.name, g.productName)}
+                               onChanged={load} />
+            );
+          })}
         </div>
       </Card>
     </div>
