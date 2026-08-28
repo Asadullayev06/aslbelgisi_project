@@ -147,6 +147,38 @@ def delete_box(project_id: int, box_id: int,
     return _wrap(res, sess, project_id, u.id)
 
 
+class RemoveCodeRequest(BaseModel):
+    km_code: str
+
+
+@router.post("/boxes/{box_id}/remove-code", response_model=ScanResponse)
+def remove_code_from_box(project_id: int, box_id: int, body: RemoveCodeRequest,
+                         sess: Session = Depends(get_session),
+                         u: User = Depends(require_admin)):
+    """Admin-only surgical fix: pluck one KM out of a closed box.
+
+    Returns the KM to `pending` in the pool so the box shrinks by one and
+    the code shows up back in SKANERLANMAGAN KM KODLAR (from where admin
+    can either re-scan it into another box, or delete it entirely).
+    """
+    res = scanning.remove_code_from_box(sess, project_id, box_id, body.km_code)
+    return _wrap(res, sess, project_id, u.id)
+
+
+@router.post("/pending-km/delete", response_model=ScanResponse)
+def delete_pending_km(project_id: int, body: RemoveCodeRequest,
+                      sess: Session = Depends(get_session),
+                      u: User = Depends(require_admin)):
+    """Admin-only: drop a KM from the pool that was uploaded but never scanned.
+
+    Concurrency-safe against a live scan: the WHERE clause only matches
+    truly-pending rows, so if a scanner claims the code at the same instant
+    the DELETE affects zero rows and the admin gets a clear error.
+    """
+    res = scanning.delete_pending_pool_code(sess, project_id, body.km_code)
+    return _wrap(res, sess, project_id, u.id)
+
+
 class BoxCodeOut(BaseModel):
     km_code: str
     matched_series: list[str] = []          # empty = extra (not in manifest)

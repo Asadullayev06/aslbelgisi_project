@@ -744,6 +744,106 @@ def set_loose_mode(sess: Session, project_id: int, user_id: int, on: bool) -> di
     return _hit(f"loose rejim {'yoqildi' if on else 'o' + chr(0x027B) + 'chirildi'}")
 
 
+def remove_code_from_box(sess: Session, project_id: int, box_id: int,
+                         km_code: str) -> dict:
+    """Admin-only: pluck ONE code out of a closed box.
+
+    * Aggregation: the row returns to pending in the pool (box empties by one).
+    * Inventory extras (series='') have nowhere to return to — delete them.
+    * Inventory manifest rows (series!='') return to pending like aggregation.
+
+    Refuses if the project is already being sent / has been sent to ASL, so
+    we can't retroactively rewrite what was reported. Atomic UPDATE guards
+    against a race with any concurrent scan (aggregated rows are read-only
+    to the scan path, so this is belt-and-braces).
+    """
+    project = sess.get(Project, project_id)
+    if project is None:
+        return _err("loyiha topilmadi")
+    if project.status in ("submitting", "submitted"):
+        return _err("bu loyiha ASL ga yuborilgan — kodni olib bo'lmaydi")
+
+    box = sess.get(Box, box_id)
+    if box is None or box.project_id != project_id:
+        return _err("quti topilmadi")
+
+    canon = km_code.strip()
+    if not canon:
+        return _err("kod bo'sh")
+
+    is_inventory = project and project.mode == "inventory"
+
+    if is_inventory:
+        # Extras (no manifest series) get deleted, manifest rows return to pool.
+        sess.execute(
+            delete(KmPool).where(
+                KmPool.project_id == project_id,
+                KmPool.box_id == box_id,
+                KmPool.km_code == canon,
+                KmPool.series == "",
+            )
+        )
+        r = sess.execute(
+            update(KmPool)
+            .where(KmPool.project_id == project_id,
+                   KmPool.box_id == box_id,
+                   KmPool.km_code == canon,
+                   KmPool.series != "")
+            .values(status="pending", box_id=None, claimed_by=None,
+                    claimed_at=None, open_box_id=None)
+        )
+        touched = r.rowcount or 0
+    else:
+        r = sess.execute(
+            update(KmPool)
+            .where(KmPool.project_id == project_id,
+                   KmPool.box_id == box_id,
+                   KmPool.km_code == canon)
+            .values(status="pending", box_id=None, claimed_by=None,
+                    claimed_at=None, open_box_id=None)
+        )
+        touched = r.rowcount or 0
+
+    if touched == 0:
+        # Nothing changed — either the code isn't in this box or the row was
+        # already moved by another admin action.
+        return _err("kod bu qutida topilmadi")
+    return _hit(f"kod qutidan olindi: {canon}")
+
+
+def delete_pending_pool_code(sess: Session, project_id: int,
+                             km_code: str) -> dict:
+    """Admin-only: purge a pending KM from the pool.
+
+    A single atomic DELETE with WHERE status='pending' AND open_box_id IS NULL
+    ensures we can't race a scanner who is claiming it at the same instant —
+    if the scanner wins, our rowcount is 0 and we return a clear error.
+    Never deletes an already-aggregated or in-progress row.
+    """
+    project = sess.get(Project, project_id)
+    if project is None:
+        return _err("loyiha topilmadi")
+    if project.status in ("submitting", "submitted"):
+        return _err("bu loyiha ASL ga yuborilgan — kodni o'chirib bo'lmaydi")
+
+    canon = km_code.strip()
+    if not canon:
+        return _err("kod bo'sh")
+
+    r = sess.execute(
+        delete(KmPool).where(
+            KmPool.project_id == project_id,
+            KmPool.km_code == canon,
+            KmPool.status == "pending",
+            KmPool.open_box_id.is_(None),
+            KmPool.box_id.is_(None),
+        )
+    )
+    if (r.rowcount or 0) == 0:
+        return _err("kod topilmadi yoki hozirgina skanerlanmoqda")
+    return _hit(f"kod ro'yxatdan o'chirildi: {canon}")
+
+
 def delete_box(sess: Session, project_id: int, box_id: int) -> dict:
     box = sess.get(Box, box_id)
     if box is None or box.project_id != project_id:

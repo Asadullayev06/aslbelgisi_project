@@ -369,6 +369,19 @@ export function Scan({ projectId, onExit }: Props) {
     } catch (e: any) { push("err", String(e.message || e)); }
   }
 
+  // Admin surgical fix: remove one KM from a closed box (code returns to pool).
+  async function removeCodeFromBox(boxId: number, kmCode: string) {
+    const r = await api.removeCodeFromBox(projectId, boxId, kmCode);
+    applyState(r.state); push(r.level, r.message);
+    if (r.level !== "hit") throw new Error(r.message);
+  }
+  // Admin: drop a pending pool row that was uploaded but never scanned.
+  async function deletePendingKm(kmCode: string) {
+    const r = await api.deletePendingKm(projectId, kmCode);
+    applyState(r.state); push(r.level, r.message);
+    if (r.level !== "hit") throw new Error(r.message);
+  }
+
   async function doValidate() {
     setValidating(true); setSubmitResult(null);
     try {
@@ -751,6 +764,7 @@ export function Scan({ projectId, onExit }: Props) {
             count={state.missing_km.count}
             preview={state.missing_km.preview}
             emptyMessage="Barcha yuklangan KM lar qutilarga taqsimlangan"
+            onDelete={admin ? deletePendingKm : undefined}
           />
           <MissingPanel
             title="Skanerlanmagan quti kodlari"
@@ -763,7 +777,9 @@ export function Scan({ projectId, onExit }: Props) {
         {/* RIGHT — closed boxes + finalize */}
         <div className="flex flex-col gap-4">
           <ClosedBoxes boxes={state.closed_boxes}
-                       onDelete={admin ? deleteBox : undefined} />
+                       onDelete={admin ? deleteBox : undefined}
+                       onFetchContents={(boxId) => api.boxContents(projectId, boxId)}
+                       onRemoveCode={admin ? removeCodeFromBox : undefined} />
 
           {admin ? (
           <Card>

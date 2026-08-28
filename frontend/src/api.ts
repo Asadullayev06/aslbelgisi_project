@@ -246,6 +246,16 @@ export const api = {
                       { method: "POST", body: JSON.stringify({ on }) }),
   deleteBox: (projectId: number, boxId: number) =>
     req<ScanResponse>(`/api/projects/${projectId}/boxes/${boxId}`, { method: "DELETE" }),
+  /** Admin surgical fix: pluck one KM out of a closed box; it returns to
+   *  pending in the pool. Refused when the project is submitting/submitted. */
+  removeCodeFromBox: (projectId: number, boxId: number, kmCode: string) =>
+    req<ScanResponse>(`/api/projects/${projectId}/boxes/${boxId}/remove-code`,
+      { method: "POST", body: JSON.stringify({ km_code: kmCode }) }),
+  /** Admin: delete a KM pool row that was uploaded but never scanned.
+   *  Concurrency-safe — a scanner claiming the same code wins the race. */
+  deletePendingKm: (projectId: number, kmCode: string) =>
+    req<ScanResponse>(`/api/projects/${projectId}/pending-km/delete`,
+      { method: "POST", body: JSON.stringify({ km_code: kmCode }) }),
   analyzeProject: (projectId: number) =>
     req<AnalysisResult>(`/api/projects/${projectId}/analyze`, { method: "POST" }),
 
