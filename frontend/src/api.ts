@@ -296,6 +296,11 @@ export const api = {
     package_types: string[]; statuses: string[];
     emission_types: string[]; release_methods: string[];
     product_series: string;
+    /** YYYY-MM-DD. ASL caps an export at ~10MB and has NO pagination, so
+     *  narrowing the emission-date window is the only way to slice a big
+     *  GTIN. The page bisects on this when an export returns status ERROR. */
+    emission_date_from?: string;
+    emission_date_to?: string;
   }) =>
     req<StockRegisterResp>("/api/gtin-stock/register",
       { method: "POST", body: JSON.stringify(body) }),

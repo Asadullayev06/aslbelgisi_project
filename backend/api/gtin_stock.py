@@ -36,6 +36,13 @@ class RegisterBody(BaseModel):
     emission_types: list[str] = []
     release_methods: list[str] = []
     product_series: str = ""
+    # Date window (YYYY-MM-DD). ASL has a ~10 MB cap on an export result and
+    # offers NO pagination — unknown params like limit/page/offset are
+    # silently ignored. Narrowing the emission-date range is the only way to
+    # slice a big GTIN, so the client bisects on this window when an export
+    # comes back with status ERROR.
+    emission_date_from: str = ""
+    emission_date_to: str = ""
 
 
 class ResultBody(BaseModel):
@@ -131,6 +138,10 @@ def register(body: RegisterBody, _u: User = Depends(current_user)):
     if body.release_methods: payload["originalReleaseMethod"]  = body.release_methods
     if body.product_series.strip():
         payload["productSeries"] = body.product_series.strip()
+    if body.emission_date_from.strip():
+        payload["emissionDateFrom"] = f"{body.emission_date_from.strip()}T00:00:00Z"
+    if body.emission_date_to.strip():
+        payload["emissionDateTo"] = f"{body.emission_date_to.strip()}T23:59:59Z"
 
     res = asl_stock.register_export(body.api_key.strip(), payload)
     if not res.get("success"):

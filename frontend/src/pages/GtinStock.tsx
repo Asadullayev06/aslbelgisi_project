@@ -29,9 +29,31 @@ type Phase =
   | { kind: "idle" }
   | { kind: "registering" }
   | { kind: "polling"; exportId: string; status: string; startedAt: number; mode: OutputMode }
+  /** Auto-bisect mode: the unwindowed export came back ERROR (ASL's ~10MB
+   *  export cap), so we walk a queue of emission-date windows instead. */
+  | { kind: "windowing"; done: number; queued: number; rows: number;
+      current: string; status: string; startedAt: number; failed: number }
   | { kind: "done"; result: StockResultResp }
   | { kind: "done_km"; result: KmOnlyResult }
   | { kind: "error"; message: string; recoverableExportId?: string };
+
+// ── emission-date window helpers ─────────────────────────
+// ASL offers NO pagination on /public/api/cod/exports (limit/page/offset are
+// silently ignored), and an oversized result just flips the export status to
+// ERROR. The only slicing axis it honours is the date range, so we bisect.
+type Win = { from: string; to: string };   // inclusive, "YYYY-MM-DD"
+
+const DAY_MS = 86400000;
+const isoDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+const dayMs  = (s: string) => Date.parse(s + "T00:00:00Z");
+const winDays = (w: Win) => Math.round((dayMs(w.to) - dayMs(w.from)) / DAY_MS) + 1;
+function splitWin(w: Win): [Win, Win] {
+  const a = dayMs(w.from), b = dayMs(w.to);
+  const mid = a + Math.floor((b - a) / 2 / DAY_MS) * DAY_MS;
+  return [{ from: w.from, to: isoDay(mid) },
+          { from: isoDay(mid + DAY_MS), to: w.to }];
+}
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 export function GtinStock({ onExit }: { onExit: () => void }) {
   // auth (per-company — not our app's login; ASL's business-user credentials)
@@ -48,6 +70,12 @@ export function GtinStock({ onExit }: { onExit: () => void }) {
   const [releaseMethods, setReleaseMethods] = useState<string[]>(["IMPORT"]);
   const [productSeries, setProductSeries] = useState("");
   const [mode, setMode] = useState<OutputMode>("full");
+  // Bounds for the auto-bisect. Narrower = far fewer ASL round-trips, so the
+  // default is a 3-year look-back rather than "all time".
+  const [dateFrom, setDateFrom] = useState(
+    isoDay(Date.now() - 3 * 365 * DAY_MS));
+  const [dateTo, setDateTo] = useState(isoDay(Date.now()));
+  const cancelRef = useRef(false);
 
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const { flashes, push, dismiss } = useFlashes();
@@ -143,28 +171,149 @@ export function GtinStock({ onExit }: { onExit: () => void }) {
     pollTimer.current = window.setInterval(tick, 3000);
   }
 
+  // ── windowed fetch primitives ────────────────────────
+  /** Register one export (optionally date-windowed) and wait for a terminal
+   *  status. Returns the export id plus the final ASL status. */
+  async function fetchWindow(w: Win | null): Promise<{ status: string; exportId: string }> {
+    const r = await api.stockRegister({
+      inn: inn.trim(), api_key: aslKey.trim(), gtin: gtin.trim(),
+      package_types: packageTypes, statuses,
+      emission_types: emissionTypes, release_methods: releaseMethods,
+      product_series: productSeries.trim(),
+      emission_date_from: w?.from ?? "",
+      emission_date_to:   w?.to   ?? "",
+    });
+    if (!r.ok) throw new Error(r.error || "register failed");
+    for (;;) {
+      if (cancelRef.current) throw new Error("bekor qilindi");
+      const s = await api.stockStatus(r.export_id, aslKey.trim());
+      if (!s.ok) throw new Error(s.error || "status failed");
+      if (s.status === "SUCCESS" || s.ready) return { status: "SUCCESS", exportId: r.export_id };
+      if (["ERROR", "EXPIRED", "FAILED"].includes(s.status))
+        return { status: s.status, exportId: r.export_id };
+      setPhase(p => p.kind === "polling"   ? { ...p, status: s.status || "PROCESSING" }
+                 : p.kind === "windowing"  ? { ...p, status: s.status || "PROCESSING" } : p);
+      await sleep(3000);
+    }
+  }
+
+  /** Pull the payload for a finished export, honouring the output mode. */
+  async function collect(exportId: string) {
+    if (mode === "km_only") {
+      const r = await api.stockKmOnly(exportId, aslKey.trim(), inn.trim(),
+                                      productSeries.trim());
+      if (!r.ok) throw new Error(r.error || "km-only fetch failed");
+      return { km: r as KmOnlyResult, full: null as StockResultResp | null };
+    }
+    const r = await api.stockResult(exportId, aslKey.trim(), productSeries.trim());
+    if (!r.ok) throw new Error(r.error || "result fetch failed");
+    return { km: null as KmOnlyResult | null, full: r as StockResultResp };
+  }
+
   async function runSearch() {
     if (!verified) { push("err", "Avval INN + API kalitni tekshiring"); return; }
     if (!gtin.trim() || !gtin.trim().match(/^\d+$/)) {
       push("err", "GTIN faqat raqamlardan iborat bo'lishi kerak");
       return;
     }
+    if (pollTimer.current) clearInterval(pollTimer.current);
+    cancelRef.current = false;
     setPhase({ kind: "registering" });
+
     try {
-      const r = await api.stockRegister({
-        inn: inn.trim(), api_key: aslKey.trim(), gtin: gtin.trim(),
-        package_types: packageTypes, statuses,
-        emission_types: emissionTypes, release_methods: releaseMethods,
-        product_series: productSeries.trim(),
-      });
-      if (!r.ok) {
-        setPhase({ kind: "error", message: r.error || "register failed" });
+      // 1. Fast path — try the whole GTIN with no date window.
+      setPhase({ kind: "polling", exportId: "—", status: "CREATED",
+                 startedAt: Date.now(), mode });
+      const first = await fetchWindow(null);
+      if (first.status === "SUCCESS") {
+        const got = await collect(first.exportId);
+        if (got.km) {
+          setPhase({ kind: "done_km", result: got.km });
+          push("hit", `Tayyor: ${got.km.row_count} ta KM kod`);
+        } else {
+          setPhase({ kind: "done", result: got.full! });
+          push("hit", `Tayyor: ${got.full!.row_count} ta kod`);
+        }
         return;
       }
-      startPolling(r.export_id);
+      if (first.status === "EXPIRED") {
+        setPhase({ kind: "error", message: "ASL export muddati o'tdi. Qayta urinib ko'ring." });
+        return;
+      }
+      if (first.status !== "ERROR") {
+        setPhase({ kind: "error", message: `ASL export holati: ${first.status}` });
+        return;
+      }
+
+      // 2. ERROR == over ASL's ~10MB export cap. Bisect the emission-date
+      //    range until every slice comes back SUCCESS, then merge.
+      push("warn", "Natija ASL limitidan katta — sanalar bo'yicha bo'lib yuklanmoqda…");
+      const queue: Win[] = [{ from: dateFrom, to: dateTo }];
+      const byCode = new Map<string, StockRow>();
+      const kmSet  = new Set<string>();
+      const kmWarn: string[] = [];
+      const failed: Win[] = [];
+      let done = 0;
+      let transportTotal = 0;
+
+      while (queue.length) {
+        if (cancelRef.current) throw new Error("bekor qilindi");
+        const w = queue.shift()!;
+        setPhase({ kind: "windowing", done, queued: queue.length + 1,
+                   rows: mode === "km_only" ? kmSet.size : byCode.size,
+                   current: `${w.from} … ${w.to}`, status: "CREATED",
+                   startedAt: Date.now(), failed: failed.length });
+        const res = await fetchWindow(w);
+        if (res.status === "SUCCESS") {
+          const got = await collect(res.exportId);
+          if (got.km) {
+            for (const c of got.km.km_codes) kmSet.add(c);
+            transportTotal += got.km.transport_count;
+            kmWarn.push(...got.km.warnings);
+          } else {
+            for (const row of got.full!.rows) byCode.set(row.code, row);
+          }
+          done++;
+        } else if (res.status === "ERROR" && winDays(w) > 1) {
+          const [a, b] = splitWin(w);
+          queue.unshift(b); queue.unshift(a);      // depth-first, chronological
+        } else {
+          failed.push(w);                           // 1 day and still too big
+          done++;
+        }
+      }
+
+      if (mode === "km_only") {
+        setPhase({ kind: "done_km", result: {
+          ok: true, export_id: "(bo'lib yuklandi)",
+          km_codes: [...kmSet], row_count: kmSet.size,
+          transport_count: transportTotal, warnings: kmWarn,
+          fetched_at: new Date().toISOString(), error: "",
+        }});
+        push("hit", `Tayyor: ${kmSet.size} ta KM kod (${done} ta oyna)`);
+      } else {
+        const merged = [...byCode.values()];
+        setPhase({ kind: "done", result: {
+          ok: true, export_id: "(bo'lib yuklandi)",
+          row_count: merged.length, raw_result_count: merged.length,
+          rows: merged, available_series: [],
+          zip_b64: "", zip_filename: "",
+          fetched_at: new Date().toISOString(), error: "",
+        }});
+        push("hit", `Tayyor: ${merged.length} ta kod (${done} ta oyna)`);
+      }
+      if (failed.length) {
+        push("err", `${failed.length} ta kun ASL limitidan katta bo'lib qoldi: `
+          + failed.map(f => f.from).join(", "));
+      }
     } catch (e: any) {
       setPhase({ kind: "error", message: String(e.message || e) });
     }
+  }
+
+  function cancelRun() {
+    cancelRef.current = true;
+    if (pollTimer.current) clearInterval(pollTimer.current);
   }
 
   function recheck() {
@@ -322,6 +471,31 @@ export function GtinStock({ onExit }: { onExit: () => void }) {
               </Field>
             </div>
 
+            {/* Auto-bisect bounds. ASL caps an export at ~10MB and has no
+                pagination, so when the result is too big the page splits this
+                range in half repeatedly. A tighter range = far fewer calls. */}
+            <div className="mt-4">
+              <div className="text-xs uppercase tracking-widest text-muted mb-2">
+                Emissiya sanasi oralig'i
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <Field label="Dan">
+                  <Input type="date" value={dateFrom}
+                         onChange={e => setDateFrom(e.target.value)} />
+                </Field>
+                <Field label="Gacha">
+                  <Input type="date" value={dateTo}
+                         onChange={e => setDateTo(e.target.value)} />
+                </Field>
+              </div>
+              <div className="text-xs text-muted mt-1.5">
+                Avval butun GTIN bitta so'rovda olinadi. Agar natija ASL ning
+                ~10&nbsp;MB limitidan katta bo'lsa, shu oraliq avtomatik ikkiga
+                bo'linib, har bo'lagi alohida yuklanadi va natijalar birlashtiriladi.
+                Oraliqni toraytirish so'rovlar sonini keskin kamaytiradi.
+              </div>
+            </div>
+
             {/* Output mode — FULL = 9.1 export (KM + SSCC + series);
                  KM ONLY = 9.1 export followed by 9.3 nested-codes/owner-check
                  to unpack each transport code into its child KMs. */}
@@ -365,10 +539,13 @@ export function GtinStock({ onExit }: { onExit: () => void }) {
 
             <div className="mt-4 flex flex-col gap-2">
               <Button variant="primary" size="lg" onClick={runSearch}
-                      disabled={!verified || phase.kind === "registering" || phase.kind === "polling"}>
+                      disabled={!verified || phase.kind === "registering"
+                                || phase.kind === "polling" || phase.kind === "windowing"}>
                 {phase.kind === "registering" && <><Loader2 className="size-4 animate-spin" /> Yuborilmoqda…</>}
                 {phase.kind === "polling"     && <><Loader2 className="size-4 animate-spin" /> Kutilmoqda…</>}
-                {!(phase.kind === "registering" || phase.kind === "polling") &&
+                {phase.kind === "windowing"   && <><Loader2 className="size-4 animate-spin" /> Bo'lib yuklanmoqda…</>}
+                {!(phase.kind === "registering" || phase.kind === "polling"
+                   || phase.kind === "windowing") &&
                   <><Sparkles className="size-4" /> Ostatokni yuklash</>}
               </Button>
               <Button variant="secondary" onClick={() => {
@@ -384,7 +561,7 @@ export function GtinStock({ onExit }: { onExit: () => void }) {
 
         {/* RIGHT — status + results */}
         <div className="flex flex-col gap-4">
-          <StatusPanel phase={phase} onRecheck={recheck} />
+          <StatusPanel phase={phase} onRecheck={recheck} onCancel={cancelRun} />
 
           {phase.kind === "done_km" && (
             <KmOnlyResult result={phase.result} gtin={gtin.trim()} />
@@ -482,7 +659,9 @@ export function GtinStock({ onExit }: { onExit: () => void }) {
 }
 
 // ═════════ helpers / sub-components ═════════
-function StatusPanel({ phase, onRecheck }: { phase: Phase; onRecheck: () => void }) {
+function StatusPanel({ phase, onRecheck, onCancel }: {
+  phase: Phase; onRecheck: () => void; onCancel: () => void;
+}) {
   if (phase.kind === "idle") {
     return (
       <Card>
@@ -517,6 +696,38 @@ function StatusPanel({ phase, onRecheck }: { phase: Phase; onRecheck: () => void
             <div className="text-xs text-muted mt-0.5">Export ID: <span className="font-mono">{phase.exportId}</span> · {secs}s</div>
           </div>
         </div>
+      </Card>
+    );
+  }
+  if (phase.kind === "windowing") {
+    const total = phase.done + phase.queued;
+    const pct = total ? Math.round((phase.done / total) * 100) : 0;
+    const secs = Math.max(0, Math.round((Date.now() - phase.startedAt) / 1000));
+    return (
+      <Card>
+        <CardHead title="Holat"
+                  right={<Badge tone="warning">sanalar bo'yicha bo'lib yuklanmoqda</Badge>} />
+        <div className="flex items-center gap-3 py-2">
+          <Loader2 className="size-5 animate-spin text-warning shrink-0" />
+          <div className="flex-1 min-w-0">
+            <div className="text-sm">
+              Natija ASL ning ~10&nbsp;MB limitidan katta — davr ikkiga bo'linib yuklanmoqda.
+            </div>
+            <div className="text-xs text-muted mt-0.5">
+              Oyna: <span className="font-mono">{phase.current}</span> · {phase.status} · {secs}s
+            </div>
+            <div className="text-xs text-muted mt-0.5">
+              {phase.done} tayyor · {phase.queued} navbatda · {phase.rows.toLocaleString()} ta kod yig'ildi
+              {phase.failed > 0 && <span className="text-danger"> · {phase.failed} muvaffaqiyatsiz</span>}
+            </div>
+            <div className="mt-2 h-1.5 rounded bg-surface2 overflow-hidden">
+              <div className="h-full bg-warning transition-all" style={{ width: `${pct}%` }} />
+            </div>
+          </div>
+        </div>
+        <Button variant="outline" size="sm" className="mt-2" onClick={onCancel}>
+          <XCircle className="size-4" /> To'xtatish
+        </Button>
       </Card>
     );
   }
