@@ -43,8 +43,6 @@ type Phase =
 // emission timestamp, so no date window separates them.
 type Win = { from: string; to: string };   // inclusive, "YYYY-MM-DD"
 
-const DAY_MS = 86400000;
-const isoDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 export function GtinStock({ onExit }: { onExit: () => void }) {
@@ -62,11 +60,10 @@ export function GtinStock({ onExit }: { onExit: () => void }) {
   const [releaseMethods, setReleaseMethods] = useState<string[]>(["IMPORT"]);
   const [productSeries, setProductSeries] = useState("");
   const [mode, setMode] = useState<OutputMode>("full");
-  // Bounds for the auto-bisect. Narrower = far fewer ASL round-trips, so the
-  // default is a 3-year look-back rather than "all time".
-  const [dateFrom, setDateFrom] = useState(
-    isoDay(Date.now() - 3 * 365 * DAY_MS));
-  const [dateTo, setDateTo] = useState(isoDay(Date.now()));
+  // Optional emission-date narrowing. Default BLANK = whole period; a
+  // non-empty default would silently hide stock outside the window.
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const cancelRef = useRef(false);
 
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
@@ -213,10 +210,13 @@ export function GtinStock({ onExit }: { onExit: () => void }) {
     setPhase({ kind: "registering" });
 
     try {
-      // 1. Fast path — try the whole GTIN with no date window.
+      // Honour the operator's date range if they set one. Both blank = the
+      // whole period, which is what most GTINs want.
+      const win: Win | null = (dateFrom || dateTo)
+        ? { from: dateFrom, to: dateTo } : null;
       setPhase({ kind: "polling", exportId: "—", status: "CREATED",
                  startedAt: Date.now(), mode });
-      const first = await fetchWindow(null);
+      const first = await fetchWindow(win);
       if (first.status === "SUCCESS") {
         const got = await collect(first.exportId);
         if (got.km) {
