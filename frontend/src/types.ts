@@ -218,7 +218,13 @@ export interface StockResultResp {
   rows: StockRow[]; available_series: string[];
   zip_b64: string; zip_filename: string; fetched_at: string; error: string;
 }
-export interface StockVerifyResp { ok: boolean; inn: string; error?: string | null; detail?: any; }
+export interface StockVerifyResp {
+  ok: boolean; inn: string; error?: string | null; detail?: any;
+  /** ASL api-keys/check: does this key really belong to that INN? */
+  tin_correct?: boolean | null;
+  /** ISO date the API key expires — max 90 days per ASL docs §1.4. */
+  expires_on?: string;
+}
 
 // Marking-code inspector
 export interface InspectorBasic {

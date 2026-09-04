@@ -62,6 +62,12 @@ class VerifyOut(BaseModel):
     inn: str
     detail: dict | str | None = None
     error: str | None = None
+    # From ASL's api-keys/check response: {"isTinCorrect":true,
+    # "expiresOn":"2026-11-16T23:59:59Z"}. A Business User API key lives at
+    # most 90 days (docs §1.4), so surfacing the expiry saves an operator
+    # debugging a sudden 401.
+    tin_correct: bool | None = None
+    expires_on: str = ""
 
 
 class RegisterOut(BaseModel):
@@ -116,9 +122,14 @@ class ResultOut(BaseModel):
 @router.post("/verify", response_model=VerifyOut)
 def verify(body: VerifyBody, _u: User = Depends(current_user)):
     res = asl_stock.verify_api_key_ownership(body.inn.strip(), body.api_key.strip())
-    if res.get("success"):
-        return VerifyOut(ok=True, inn=body.inn.strip(), detail=res.get("data"))
-    return VerifyOut(ok=False, inn=body.inn.strip(), error=res.get("error", "verify failed"))
+    if not res.get("success"):
+        return VerifyOut(ok=False, inn=body.inn.strip(),
+                         error=res.get("error", "verify failed"))
+    data = res.get("data") or {}
+    tin_ok = data.get("isTinCorrect") if isinstance(data, dict) else None
+    expires = str(data.get("expiresOn", "")) if isinstance(data, dict) else ""
+    return VerifyOut(ok=True, inn=body.inn.strip(), detail=data,
+                     tin_correct=tin_ok, expires_on=expires)
 
 
 @router.post("/register", response_model=RegisterOut)

@@ -35,11 +35,10 @@ type Phase =
   | { kind: "done_km"; result: KmOnlyResult }
   | { kind: "error"; message: string; recoverableExportId?: string };
 
-// Package types that hold OTHER codes. ASL: "Sizning markirovka kodlaringiz
-// transport kodlari tarkibida joylashgan" — the KMs live inside transport
-// codes, and 9.3 unpacks them. Exporting these is cheap (a few hundred rows)
-// whereas exporting the UNIT codes themselves blows the 10MB cap.
-const TRANSPORT_PACKAGE_TYPES = ["GROUP", "SET", "BOX_LV_1", "BOX_LV_2"];
+// 9.3 (nested-codes/owner-check) takes codes as INPUT and returns their
+// children — it cannot find codes by GTIN. It only helps when the export
+// actually returns transport packages; for loose UNIT stock it is a no-op.
+// Docs cap a 9.3 request at 100 codes; we stay well under.
 const EXPAND_BATCH = 25;   // must not exceed MAX_EXPAND_BATCH server-side
 
 // ── emission-date window ─────────────────────────────────
@@ -92,7 +91,14 @@ export function GtinStock({ onExit }: { onExit: () => void }) {
       const r = await api.stockVerify(inn.trim(), aslKey.trim());
       if (r.ok) {
         setVerified({ inn: r.inn });
-        push("hit", `Tekshirildi — INN ${r.inn}`);
+        const exp = r.expires_on ? ` · kalit ${r.expires_on.slice(0, 10)} gacha` : "";
+        if (r.tin_correct === false) {
+          // Key is valid but registered to a different INN — the export will
+          // return that company's stock, not this one's.
+          push("warn", `Diqqat: API kalit ${r.inn} INN ga tegishli emas${exp}`);
+        } else {
+          push("hit", `Tekshirildi — INN ${r.inn}${exp}`);
+        }
       } else {
         setVerified(null);
         push("err", r.error || "Tekshirish muvaffaqiyatsiz");
@@ -173,12 +179,14 @@ export function GtinStock({ onExit }: { onExit: () => void }) {
   /** Register one export (optionally date-windowed) and wait for a terminal
    *  status. Returns the export id plus the final ASL status. */
   async function fetchWindow(w: Win | null): Promise<{ status: string; exportId: string }> {
-    // km-only exports the TRANSPORT codes and unpacks them with 9.3, so the
-    // operator's UNIT package-type choice must not be sent here — that is
-    // exactly what used to push the export over the 10MB cap.
+    // NOTE: do NOT force transport package types for km-only. Measured on
+    // GTIN 08901463125526 (2026-09-04): GROUP / SET / BOX_LV_1 / BOX_LV_2 all
+    // return 0 rows while UNIT returns ERROR — these codes are loose units,
+    // not aggregated into transport packages, so 9.3 has nothing to expand.
+    // Forcing transport types made km-only silently return 0.
     const r = await api.stockRegister({
       inn: inn.trim(), api_key: aslKey.trim(), gtin: gtin.trim(),
-      package_types: mode === "km_only" ? TRANSPORT_PACKAGE_TYPES : packageTypes,
+      package_types: packageTypes,
       statuses,
       emission_types: emissionTypes, release_methods: releaseMethods,
       product_series: productSeries.trim(),
@@ -529,8 +537,8 @@ export function GtinStock({ onExit }: { onExit: () => void }) {
                   </div>
                   <div className="text-xs text-muted leading-snug">
                     Transport kodlar ichini ochib · 9.3 metod · sekinroq.
-                    Package Type yuqoridagi tanlovdan qat'i nazar transport
-                    kodlari (GROUP/SET/BOX_LV) bo'yicha olinadi.
+                    Faqat kodlar qutilarga (GROUP/SET/BOX_LV) yig'ilgan
+                    bo'lsa ishlaydi.
                   </div>
                 </button>
               </div>
