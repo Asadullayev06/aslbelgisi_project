@@ -79,12 +79,19 @@ def extract_status_value(payload: Any) -> str:
 # API calls
 # ─────────────────────────────────────────────────────────────
 def verify_api_key_ownership(inn: str, api_key: str) -> dict:
-    """GET /public/api/v1/party/parties/tin/api-keys/check?tin=<inn>"""
+    """GET /public/api/v1/party/parties/{tin}/api-keys/check
+
+    `tin` is a PATH segment, not a query parameter. We used to call
+    .../parties/tin/api-keys/check?tin=<inn> — i.e. the literal word "tin"
+    in the path — which always came back {"isTinCorrect": false} even for a
+    key that genuinely belonged to the INN. Confirmed with ASL support.
+
+    The response also carries the API key's expiry date.
+    """
     try:
         resp = requests.get(
-            f"{_base()}/public/api/v1/party/parties/tin/api-keys/check",
+            f"{_base()}/public/api/v1/party/parties/{inn.strip()}/api-keys/check",
             headers=_headers(api_key),
-            params={"tin": inn.strip()},
             timeout=REQUEST_TIMEOUT,
         )
         if resp.status_code in (200, 201):

@@ -29,30 +29,22 @@ type Phase =
   | { kind: "idle" }
   | { kind: "registering" }
   | { kind: "polling"; exportId: string; status: string; startedAt: number; mode: OutputMode }
-  /** Auto-bisect mode: the unwindowed export came back ERROR (ASL's ~10MB
-   *  export cap), so we walk a queue of emission-date windows instead. */
-  | { kind: "windowing"; done: number; queued: number; rows: number;
-      current: string; status: string; startedAt: number; failed: number }
   | { kind: "done"; result: StockResultResp }
   | { kind: "done_km"; result: KmOnlyResult }
   | { kind: "error"; message: string; recoverableExportId?: string };
 
-// ── emission-date window helpers ─────────────────────────
-// ASL offers NO pagination on /public/api/cod/exports (limit/page/offset are
-// silently ignored), and an oversized result just flips the export status to
-// ERROR. The only slicing axis it honours is the date range, so we bisect.
+// ── emission-date window ─────────────────────────────────
+// ASL's export has a hard 10MB cap, no pagination (limit/page/offset/size are
+// silently accepted and ignored), and codeHistory — which dominates the
+// payload — cannot be disabled. Confirmed by ASL support. Narrowing the
+// filters is therefore the ONLY lever, so the date range is offered as a
+// manual filter. Note it cannot help when the codes were all registered by a
+// single document: bulk customs registration gives them a near-identical
+// emission timestamp, so no date window separates them.
 type Win = { from: string; to: string };   // inclusive, "YYYY-MM-DD"
 
 const DAY_MS = 86400000;
 const isoDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
-const dayMs  = (s: string) => Date.parse(s + "T00:00:00Z");
-const winDays = (w: Win) => Math.round((dayMs(w.to) - dayMs(w.from)) / DAY_MS) + 1;
-function splitWin(w: Win): [Win, Win] {
-  const a = dayMs(w.from), b = dayMs(w.to);
-  const mid = a + Math.floor((b - a) / 2 / DAY_MS) * DAY_MS;
-  return [{ from: w.from, to: isoDay(mid) },
-          { from: isoDay(mid + DAY_MS), to: w.to }];
-}
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 export function GtinStock({ onExit }: { onExit: () => void }) {
@@ -191,8 +183,8 @@ export function GtinStock({ onExit }: { onExit: () => void }) {
       if (s.status === "SUCCESS" || s.ready) return { status: "SUCCESS", exportId: r.export_id };
       if (["ERROR", "EXPIRED", "FAILED"].includes(s.status))
         return { status: s.status, exportId: r.export_id };
-      setPhase(p => p.kind === "polling"   ? { ...p, status: s.status || "PROCESSING" }
-                 : p.kind === "windowing"  ? { ...p, status: s.status || "PROCESSING" } : p);
+      setPhase(p => p.kind === "polling"
+        ? { ...p, status: s.status || "PROCESSING" } : p);
       await sleep(3000);
     }
   }
@@ -245,67 +237,34 @@ export function GtinStock({ onExit }: { onExit: () => void }) {
         return;
       }
 
-      // 2. ERROR == over ASL's ~10MB export cap. Bisect the emission-date
-      //    range until every slice comes back SUCCESS, then merge.
-      push("warn", "Natija ASL limitidan katta — sanalar bo'yicha bo'lib yuklanmoqda…");
-      const queue: Win[] = [{ from: dateFrom, to: dateTo }];
-      const byCode = new Map<string, StockRow>();
-      const kmSet  = new Set<string>();
-      const kmWarn: string[] = [];
-      const failed: Win[] = [];
-      let done = 0;
-      let transportTotal = 0;
-
-      while (queue.length) {
-        if (cancelRef.current) throw new Error("bekor qilindi");
-        const w = queue.shift()!;
-        setPhase({ kind: "windowing", done, queued: queue.length + 1,
-                   rows: mode === "km_only" ? kmSet.size : byCode.size,
-                   current: `${w.from} … ${w.to}`, status: "CREATED",
-                   startedAt: Date.now(), failed: failed.length });
-        const res = await fetchWindow(w);
-        if (res.status === "SUCCESS") {
-          const got = await collect(res.exportId);
-          if (got.km) {
-            for (const c of got.km.km_codes) kmSet.add(c);
-            transportTotal += got.km.transport_count;
-            kmWarn.push(...got.km.warnings);
-          } else {
-            for (const row of got.full!.rows) byCode.set(row.code, row);
-          }
-          done++;
-        } else if (res.status === "ERROR" && winDays(w) > 1) {
-          const [a, b] = splitWin(w);
-          queue.unshift(b); queue.unshift(a);      // depth-first, chronological
-        } else {
-          failed.push(w);                           // 1 day and still too big
-          done++;
-        }
-      }
-
-      if (mode === "km_only") {
-        setPhase({ kind: "done_km", result: {
-          ok: true, export_id: "(bo'lib yuklandi)",
-          km_codes: [...kmSet], row_count: kmSet.size,
-          transport_count: transportTotal, warnings: kmWarn,
-          fetched_at: new Date().toISOString(), error: "",
-        }});
-        push("hit", `Tayyor: ${kmSet.size} ta KM kod (${done} ta oyna)`);
-      } else {
-        const merged = [...byCode.values()];
-        setPhase({ kind: "done", result: {
-          ok: true, export_id: "(bo'lib yuklandi)",
-          row_count: merged.length, raw_result_count: merged.length,
-          rows: merged, available_series: [],
-          zip_b64: "", zip_filename: "",
-          fetched_at: new Date().toISOString(), error: "",
-        }});
-        push("hit", `Tayyor: ${merged.length} ta kod (${done} ta oyna)`);
-      }
-      if (failed.length) {
-        push("err", `${failed.length} ta kun ASL limitidan katta bo'lib qoldi: `
-          + failed.map(f => f.from).join(", "));
-      }
+      // 2. ERROR == the result is over ASL's hard 10MB export cap.
+      //
+      // There is NO API-side way around this, confirmed by ASL support:
+      //   * no pagination — limit/page/offset/size/pageSize/maxSize are all
+      //     silently accepted and ignored (unknown fields aren't validated);
+      //   * codeHistory (which dominates the payload) cannot be turned off;
+      //   * the 10MB cap is fixed.
+      // Narrowing the filters is the only lever, and even that fails when the
+      // codes were all registered by one document (bulk customs registration
+      // gives them a near-identical emission timestamp, so no date window can
+      // separate them). In that case the operator must request the code list
+      // from ASL by official letter.
+      //
+      // We deliberately do NOT return a partial result here — a half-filled
+      // stock list that looks complete is worse than an honest failure.
+      setPhase({ kind: "error", message:
+        "Natija ASL ning 10 MB limitidan katta — ASL eksportni ERROR bilan qaytardi.\n\n"
+        + "ASL API da sahifalash (pagination) yo'q va javob hajmini kamaytirib "
+        + "bo'lmaydi, shuning uchun bu kodlarni API orqali bo'lib yuklashning "
+        + "iloji yo'q.\n\n"
+        + "Nima qilish mumkin:\n"
+        + "• Filtrni toraytiring — LOT/seriya, emissiya sanasi oralig'i, "
+        + "packageType yoki status bo'yicha.\n"
+        + "• Agar kodlar bitta hujjat bilan ro'yxatdan o'tgan bo'lsa "
+        + "(masalan bojxona registratsiyasi), sana bo'yicha bo'lish yordam "
+        + "bermaydi — bu holda ASL Belgisi ga rasmiy xat yozib, kodlar "
+        + "ro'yxatini so'rash kerak." });
+      return;
     } catch (e: any) {
       setPhase({ kind: "error", message: String(e.message || e) });
     }
@@ -471,12 +430,12 @@ export function GtinStock({ onExit }: { onExit: () => void }) {
               </Field>
             </div>
 
-            {/* Auto-bisect bounds. ASL caps an export at ~10MB and has no
-                pagination, so when the result is too big the page splits this
-                range in half repeatedly. A tighter range = far fewer calls. */}
+            {/* ASL caps an export at 10MB with no pagination and no way to
+                shrink the payload, so narrowing the filters is the only lever
+                the operator has when an export comes back ERROR. */}
             <div className="mt-4">
               <div className="text-xs uppercase tracking-widest text-muted mb-2">
-                Emissiya sanasi oralig'i
+                Emissiya sanasi oralig'i (ixtiyoriy)
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <Field label="Dan">
@@ -489,10 +448,10 @@ export function GtinStock({ onExit }: { onExit: () => void }) {
                 </Field>
               </div>
               <div className="text-xs text-muted mt-1.5">
-                Avval butun GTIN bitta so'rovda olinadi. Agar natija ASL ning
-                ~10&nbsp;MB limitidan katta bo'lsa, shu oraliq avtomatik ikkiga
-                bo'linib, har bo'lagi alohida yuklanadi va natijalar birlashtiriladi.
-                Oraliqni toraytirish so'rovlar sonini keskin kamaytiradi.
+                ASL eksporti eng ko'pi bilan 10&nbsp;MB qaytaradi va sahifalash
+                (pagination) yo'q. Kodlar ko'p bo'lsa eksport ERROR bilan
+                tugaydi — bunda oraliqni toraytiring yoki LOT/seriya bo'yicha
+                filtrlang. Bo'sh qoldirsangiz butun davr olinadi.
               </div>
             </div>
 
@@ -540,12 +499,10 @@ export function GtinStock({ onExit }: { onExit: () => void }) {
             <div className="mt-4 flex flex-col gap-2">
               <Button variant="primary" size="lg" onClick={runSearch}
                       disabled={!verified || phase.kind === "registering"
-                                || phase.kind === "polling" || phase.kind === "windowing"}>
+                                || phase.kind === "polling"}>
                 {phase.kind === "registering" && <><Loader2 className="size-4 animate-spin" /> Yuborilmoqda…</>}
                 {phase.kind === "polling"     && <><Loader2 className="size-4 animate-spin" /> Kutilmoqda…</>}
-                {phase.kind === "windowing"   && <><Loader2 className="size-4 animate-spin" /> Bo'lib yuklanmoqda…</>}
-                {!(phase.kind === "registering" || phase.kind === "polling"
-                   || phase.kind === "windowing") &&
+                {!(phase.kind === "registering" || phase.kind === "polling") &&
                   <><Sparkles className="size-4" /> Ostatokni yuklash</>}
               </Button>
               <Button variant="secondary" onClick={() => {
@@ -695,39 +652,10 @@ function StatusPanel({ phase, onRecheck, onCancel }: {
             <div className="text-sm">ASL faylni tayyorlamoqda…</div>
             <div className="text-xs text-muted mt-0.5">Export ID: <span className="font-mono">{phase.exportId}</span> · {secs}s</div>
           </div>
+          <Button variant="outline" size="sm" onClick={onCancel}>
+            <XCircle className="size-4" /> To'xtatish
+          </Button>
         </div>
-      </Card>
-    );
-  }
-  if (phase.kind === "windowing") {
-    const total = phase.done + phase.queued;
-    const pct = total ? Math.round((phase.done / total) * 100) : 0;
-    const secs = Math.max(0, Math.round((Date.now() - phase.startedAt) / 1000));
-    return (
-      <Card>
-        <CardHead title="Holat"
-                  right={<Badge tone="warning">sanalar bo'yicha bo'lib yuklanmoqda</Badge>} />
-        <div className="flex items-center gap-3 py-2">
-          <Loader2 className="size-5 animate-spin text-warning shrink-0" />
-          <div className="flex-1 min-w-0">
-            <div className="text-sm">
-              Natija ASL ning ~10&nbsp;MB limitidan katta — davr ikkiga bo'linib yuklanmoqda.
-            </div>
-            <div className="text-xs text-muted mt-0.5">
-              Oyna: <span className="font-mono">{phase.current}</span> · {phase.status} · {secs}s
-            </div>
-            <div className="text-xs text-muted mt-0.5">
-              {phase.done} tayyor · {phase.queued} navbatda · {phase.rows.toLocaleString()} ta kod yig'ildi
-              {phase.failed > 0 && <span className="text-danger"> · {phase.failed} muvaffaqiyatsiz</span>}
-            </div>
-            <div className="mt-2 h-1.5 rounded bg-surface2 overflow-hidden">
-              <div className="h-full bg-warning transition-all" style={{ width: `${pct}%` }} />
-            </div>
-          </div>
-        </div>
-        <Button variant="outline" size="sm" className="mt-2" onClick={onCancel}>
-          <XCircle className="size-4" /> To'xtatish
-        </Button>
       </Card>
     );
   }
@@ -735,7 +663,7 @@ function StatusPanel({ phase, onRecheck, onCancel }: {
     return (
       <Card>
         <CardHead title="Holat" right={<Badge tone="danger"><XCircle className="size-3" /> xato</Badge>} />
-        <div className="text-danger text-sm font-mono break-all">{phase.message}</div>
+        <div className="text-danger text-sm whitespace-pre-line break-words">{phase.message}</div>
         {phase.recoverableExportId && (
           <Button variant="outline" className="mt-3" onClick={onRecheck}>
             <RefreshCw className="size-4" /> Qayta tekshirish
