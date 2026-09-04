@@ -29,9 +29,18 @@ type Phase =
   | { kind: "idle" }
   | { kind: "registering" }
   | { kind: "polling"; exportId: string; status: string; startedAt: number; mode: OutputMode }
+  /** km-only step 2: expanding transport codes to their child KMs via 9.3. */
+  | { kind: "expanding"; done: number; total: number; kms: number }
   | { kind: "done"; result: StockResultResp }
   | { kind: "done_km"; result: KmOnlyResult }
   | { kind: "error"; message: string; recoverableExportId?: string };
+
+// Package types that hold OTHER codes. ASL: "Sizning markirovka kodlaringiz
+// transport kodlari tarkibida joylashgan" — the KMs live inside transport
+// codes, and 9.3 unpacks them. Exporting these is cheap (a few hundred rows)
+// whereas exporting the UNIT codes themselves blows the 10MB cap.
+const TRANSPORT_PACKAGE_TYPES = ["GROUP", "SET", "BOX_LV_1", "BOX_LV_2"];
+const EXPAND_BATCH = 25;   // must not exceed MAX_EXPAND_BATCH server-side
 
 // ── emission-date window ─────────────────────────────────
 // ASL's export has a hard 10MB cap, no pagination (limit/page/offset/size are
@@ -164,9 +173,13 @@ export function GtinStock({ onExit }: { onExit: () => void }) {
   /** Register one export (optionally date-windowed) and wait for a terminal
    *  status. Returns the export id plus the final ASL status. */
   async function fetchWindow(w: Win | null): Promise<{ status: string; exportId: string }> {
+    // km-only exports the TRANSPORT codes and unpacks them with 9.3, so the
+    // operator's UNIT package-type choice must not be sent here — that is
+    // exactly what used to push the export over the 10MB cap.
     const r = await api.stockRegister({
       inn: inn.trim(), api_key: aslKey.trim(), gtin: gtin.trim(),
-      package_types: packageTypes, statuses,
+      package_types: mode === "km_only" ? TRANSPORT_PACKAGE_TYPES : packageTypes,
+      statuses,
       emission_types: emissionTypes, release_methods: releaseMethods,
       product_series: productSeries.trim(),
       emission_date_from: w?.from ?? "",
@@ -186,13 +199,38 @@ export function GtinStock({ onExit }: { onExit: () => void }) {
     }
   }
 
-  /** Pull the payload for a finished export, honouring the output mode. */
+  /** Pull the payload for a finished export, honouring the output mode.
+   *
+   *  km-only is a two-step 9.3 flow, per ASL: the export lists the TRANSPORT
+   *  codes, then each is unpacked into its child consumption KMs. Expansion
+   *  runs in small batches so no single request can hit a gateway timeout,
+   *  and so the operator sees progress on a few hundred boxes. */
   async function collect(exportId: string) {
     if (mode === "km_only") {
-      const r = await api.stockKmOnly(exportId, aslKey.trim(), inn.trim(),
-                                      productSeries.trim());
-      if (!r.ok) throw new Error(r.error || "km-only fetch failed");
-      return { km: r as KmOnlyResult, full: null as StockResultResp | null };
+      const list = await api.stockExportCodes(exportId, aslKey.trim(),
+                                              productSeries.trim());
+      if (!list.ok) throw new Error(list.error || "codes fetch failed");
+      const codes = list.codes;
+      const kmSet = new Set<string>();
+      const warnings: string[] = [];
+      for (let i = 0; i < codes.length; i += EXPAND_BATCH) {
+        if (cancelRef.current) throw new Error("bekor qilindi");
+        const batch = codes.slice(i, i + EXPAND_BATCH);
+        setPhase({ kind: "expanding", done: i, total: codes.length,
+                   kms: kmSet.size });
+        const r = await api.stockExpandCodes(aslKey.trim(), inn.trim(), batch);
+        if (!r.ok) throw new Error(r.error || "expand failed");
+        for (const c of r.km_codes) kmSet.add(c);
+        warnings.push(...r.warnings);
+      }
+      return {
+        km: {
+          ok: true, export_id: exportId, km_codes: [...kmSet],
+          row_count: kmSet.size, transport_count: list.transport_count,
+          warnings, fetched_at: new Date().toISOString(), error: "",
+        } as KmOnlyResult,
+        full: null as StockResultResp | null,
+      };
     }
     const r = await api.stockResult(exportId, aslKey.trim(), productSeries.trim());
     if (!r.ok) throw new Error(r.error || "result fetch failed");
@@ -490,7 +528,9 @@ export function GtinStock({ onExit }: { onExit: () => void }) {
                     <div className="font-semibold text-sm">Faqat KM kodlar</div>
                   </div>
                   <div className="text-xs text-muted leading-snug">
-                    Transport kodlar ichini ochib · 9.3 metod · sekinroq
+                    Transport kodlar ichini ochib · 9.3 metod · sekinroq.
+                    Package Type yuqoridagi tanlovdan qat'i nazar transport
+                    kodlari (GROUP/SET/BOX_LV) bo'yicha olinadi.
                   </div>
                 </button>
               </div>
@@ -499,10 +539,12 @@ export function GtinStock({ onExit }: { onExit: () => void }) {
             <div className="mt-4 flex flex-col gap-2">
               <Button variant="primary" size="lg" onClick={runSearch}
                       disabled={!verified || phase.kind === "registering"
-                                || phase.kind === "polling"}>
+                                || phase.kind === "polling" || phase.kind === "expanding"}>
                 {phase.kind === "registering" && <><Loader2 className="size-4 animate-spin" /> Yuborilmoqda…</>}
                 {phase.kind === "polling"     && <><Loader2 className="size-4 animate-spin" /> Kutilmoqda…</>}
-                {!(phase.kind === "registering" || phase.kind === "polling") &&
+                {phase.kind === "expanding"   && <><Loader2 className="size-4 animate-spin" /> Ochilmoqda…</>}
+                {!(phase.kind === "registering" || phase.kind === "polling"
+                   || phase.kind === "expanding") &&
                   <><Sparkles className="size-4" /> Ostatokni yuklash</>}
               </Button>
               <Button variant="secondary" onClick={() => {
@@ -651,6 +693,32 @@ function StatusPanel({ phase, onRecheck, onCancel }: {
           <div className="flex-1">
             <div className="text-sm">ASL faylni tayyorlamoqda…</div>
             <div className="text-xs text-muted mt-0.5">Export ID: <span className="font-mono">{phase.exportId}</span> · {secs}s</div>
+          </div>
+          <Button variant="outline" size="sm" onClick={onCancel}>
+            <XCircle className="size-4" /> To'xtatish
+          </Button>
+        </div>
+      </Card>
+    );
+  }
+  if (phase.kind === "expanding") {
+    const pct = phase.total ? Math.round((phase.done / phase.total) * 100) : 0;
+    return (
+      <Card>
+        <CardHead title="Holat"
+                  right={<Badge tone="warning">9.3 — ochilmoqda</Badge>} />
+        <div className="flex items-center gap-3 py-2">
+          <Loader2 className="size-5 animate-spin text-warning shrink-0" />
+          <div className="flex-1 min-w-0">
+            <div className="text-sm">
+              Transport kodlar ichidagi KM kodlar ochilmoqda…
+            </div>
+            <div className="text-xs text-muted mt-0.5">
+              {phase.done} / {phase.total} quti · {phase.kms.toLocaleString()} ta KM topildi
+            </div>
+            <div className="mt-2 h-1.5 rounded bg-surface2 overflow-hidden">
+              <div className="h-full bg-warning transition-all" style={{ width: `${pct}%` }} />
+            </div>
           </div>
           <Button variant="outline" size="sm" onClick={onCancel}>
             <XCircle className="size-4" /> To'xtatish

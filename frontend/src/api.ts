@@ -312,6 +312,19 @@ export const api = {
       { method: "POST", body: JSON.stringify({ api_key, product_series }) }),
   /** 9.3 method — unpack every transport code from the export into its
    *  consumption KMs. Returns only a flat KM code list. */
+  /** Step 1 of km-only: the raw code strings from a TRANSPORT-code export. */
+  stockExportCodes: (export_id: string, api_key: string, product_series: string) =>
+    req<{ ok: boolean; export_id: string; codes: string[];
+          transport_count: number; unit_count: number; error: string }>(
+      `/api/gtin-stock/exports/${export_id}/codes`,
+      { method: "POST", body: JSON.stringify({ api_key, product_series }) }),
+  /** Step 2 of km-only: expand a BATCH of transport codes via 9.3.
+   *  Server caps the batch at 25 so one request can't hit a gateway timeout. */
+  stockExpandCodes: (api_key: string, inn: string, codes: string[]) =>
+    req<{ ok: boolean; km_codes: string[]; warnings: string[]; error: string }>(
+      "/api/gtin-stock/expand-codes",
+      { method: "POST", body: JSON.stringify({ api_key, inn, codes }) },
+      120000),
   stockKmOnly: (export_id: string, api_key: string, inn: string, product_series: string) =>
     req<{ ok: boolean; export_id: string; km_codes: string[];
           row_count: number; transport_count: number;

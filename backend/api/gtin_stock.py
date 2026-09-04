@@ -208,11 +208,83 @@ class KmOnlyOut(BaseModel):
     error: str = ""
 
 
+class ExportCodesOut(BaseModel):
+    ok: bool
+    export_id: str = ""
+    codes: list[str] = []
+    transport_count: int = 0
+    unit_count: int = 0
+    error: str = ""
+
+
+@router.post("/exports/{export_id}/codes", response_model=ExportCodesOut)
+def export_codes(export_id: str, body: ResultBody, _u: User = Depends(current_user)):
+    """Just the code strings from a finished export — no 9.3 expansion.
+
+    Step 1 of the km-only flow. The client registers an export over the
+    TRANSPORT package types (GROUP / SET / BOX_LV_*), which is a few hundred
+    rows and stays well under ASL's 10MB cap, then feeds these codes to
+    /expand-codes in batches.
+    """
+    res = asl_stock.get_export_result(body.api_key.strip(), export_id)
+    if not res.get("success"):
+        return ExportCodesOut(ok=False, export_id=export_id,
+                              error=res.get("error", "result failed"))
+    rows = asl_stock.normalize_stock_rows(res.get("data") or {})
+    if body.product_series.strip():
+        rows, _ = asl_stock.match_series_locally(rows, body.product_series)
+    codes = [r.get("code", "") for r in rows if r.get("code")]
+    units = [c for c in codes if c.startswith("01") and len(c) >= 31]
+    return ExportCodesOut(
+        ok=True, export_id=export_id, codes=codes,
+        transport_count=len(codes) - len(units), unit_count=len(units),
+    )
+
+
+class ExpandBody(BaseModel):
+    api_key: str = Field(min_length=1)
+    inn: str = Field(min_length=1)
+    codes: list[str] = Field(min_length=1)
+
+
+class ExpandOut(BaseModel):
+    ok: bool
+    km_codes: list[str] = []
+    warnings: list[str] = []
+    error: str = ""
+
+
+# One 9.3 call per transport code plus a small rate-limit sleep, so keep the
+# batch short enough that a single HTTP request never approaches a gateway
+# timeout. The client loops over batches and shows progress.
+MAX_EXPAND_BATCH = 25
+
+
+@router.post("/expand-codes", response_model=ExpandOut)
+def expand_codes(body: ExpandBody, _u: User = Depends(current_user)):
+    """Step 2 of the km-only flow — 9.3 nested-codes/owner-check.
+
+    Unpacks each TRANSPORT code into its child consumption KMs. Codes that
+    already look like a KM (AI 01, >=31 chars) pass through untouched.
+    """
+    codes = [c.strip() for c in body.codes if c and c.strip()]
+    if not codes:
+        return ExpandOut(ok=False, error="codes required")
+    if len(codes) > MAX_EXPAND_BATCH:
+        raise HTTPException(400, f"batch juda katta (max {MAX_EXPAND_BATCH})")
+    res = asl_stock.expand_transport_to_kms(
+        body.api_key.strip(), body.inn.strip(), codes)
+    return ExpandOut(ok=True, km_codes=res.get("km_codes", []),
+                     warnings=res.get("warnings", []))
+
+
 @router.post("/exports/{export_id}/km-only", response_model=KmOnlyOut)
 def km_only(export_id: str, body: KmOnlyBody, _u: User = Depends(current_user)):
-    """9.3 flow — take the export's rows and unpack every transport
-    (SSCC / BOX_LV_*) code to its child consumption KMs, returning ONLY
-    the flat KM list. UNIT-level rows in the export are kept as-is."""
+    """Legacy single-shot 9.3 flow, kept for compatibility.
+
+    Prefer /codes + /expand-codes: this one does every 9.3 call inside one
+    request, which can outrun a gateway timeout on a few hundred boxes.
+    """
     res = asl_stock.get_export_result(body.api_key.strip(), export_id)
     if not res.get("success"):
         return KmOnlyOut(ok=False, export_id=export_id,
