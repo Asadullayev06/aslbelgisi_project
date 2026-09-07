@@ -1,6 +1,6 @@
 import { useMemo, useState, useRef } from "react";
 import {
-  ArrowLeft, Play, Upload, Plus, Trash2, ClipboardList, PackageCheck,
+  ArrowLeft, Play, Upload, Plus, Trash2, ClipboardList, PackageCheck, ShieldCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHead } from "@/components/ui/Card";
@@ -29,6 +29,11 @@ export function SetupInventory({ onCreated, onCancel }: Props) {
   const nextKey = useRef(2);
   const [busy, setBusy] = useState(false);
   const { flashes, push, dismiss } = useFlashes();
+
+  // ASL ownership-gate mode: no manifest — each scan is validated against ASL.
+  const [aslOn, setAslOn] = useState(false);
+  const [aslInn, setAslInn] = useState("");
+  const [aslKey, setAslKey] = useState("");
 
   const totals = useMemo(() => {
     let total = 0;
@@ -69,15 +74,23 @@ export function SetupInventory({ onCreated, onCancel }: Props) {
       push("err", "Loyiha nomi va mahsulot nomi to'ldirilishi kerak");
       return;
     }
-    const namesSeen = new Set<string>();
-    for (const s of seriesList) {
-      if (!s.name.trim()) { push("err", "Har bir seriya uchun nom yozing"); return; }
-      const n = s.name.trim();
-      if (namesSeen.has(n)) { push("err", `Seriya nomi takroriy: ${n}`); return; }
-      namesSeen.add(n);
-      const codeCount = s.codes.split(/\r?\n/).filter(l => l.trim().length >= 20).length;
-      if (codeCount === 0) {
-        push("err", `Seriya "${n}" uchun KM kod kiritilmagan`); return;
+    // ASL-gate mode needs credentials but NO manifest. Manifest mode needs
+    // at least one valid series. They are mutually exclusive here.
+    if (aslOn) {
+      if (!aslInn.trim() || !aslKey.trim()) {
+        push("err", "ASL tekshiruvi uchun INN va API kalit kerak"); return;
+      }
+    } else {
+      const namesSeen = new Set<string>();
+      for (const s of seriesList) {
+        if (!s.name.trim()) { push("err", "Har bir seriya uchun nom yozing"); return; }
+        const n = s.name.trim();
+        if (namesSeen.has(n)) { push("err", `Seriya nomi takroriy: ${n}`); return; }
+        namesSeen.add(n);
+        const codeCount = s.codes.split(/\r?\n/).filter(l => l.trim().length >= 20).length;
+        if (codeCount === 0) {
+          push("err", `Seriya "${n}" uchun KM kod kiritilmagan`); return;
+        }
       }
     }
 
@@ -86,10 +99,13 @@ export function SetupInventory({ onCreated, onCancel }: Props) {
       const state = await api.createInventoryProject({
         name: name.trim(),
         product_name: productName.trim(),
-        series: seriesList.map(s => ({
+        series: aslOn ? [] : seriesList.map(s => ({
           name: s.name.trim(),
           km_codes_text: s.codes,
         })),
+        asl_check_enabled: aslOn,
+        asl_check_inn: aslOn ? aslInn.trim() : "",
+        asl_check_api_key: aslOn ? aslKey.trim() : "",
       });
       onCreated(state.project.id);
     } catch (e: any) {
@@ -132,40 +148,85 @@ export function SetupInventory({ onCreated, onCancel }: Props) {
           </Field>
         </div>
         <div className="mt-3 text-xs text-muted">
-          Karobka o'lchami, MOD, API kalit — inventarizatsiya uchun kerak emas.
           Ombordagi qadoq to'lgach, uning SSCC barkodini skanerlab, keyingi
           karobkaga o'tasiz.
         </div>
       </Card>
 
-      <div className="mb-4 flex items-baseline justify-between gap-3 flex-wrap">
-        <div>
-          <div className="text-xl font-bold">Seriyalar</div>
-          <div className="text-sm text-muted">
-            Har bir seriya uchun uning KM kodlari ro'yxatini yuklang. Bir kod
-            bir nechta seriyada bo'lishi mumkin — skanerlanganda ikkalasi ham
-            ko'rsatiladi.
+      {/* ASL ownership gate — alternative to uploading a manifest. */}
+      <Card className="mb-4">
+        <CardHead title="Tekshirish usuli"
+                  right={<Badge tone={aslOn ? "accent" : "neutral"}>
+                    <ShieldCheck className="size-3" /> {aslOn ? "ASL" : "Ro'yxat"}
+                  </Badge>} />
+        <label className="flex items-start gap-3 cursor-pointer">
+          <input type="checkbox" className="mt-1 size-4 accent-[hsl(var(--accent))]"
+                 checked={aslOn} onChange={e => setAslOn(e.target.checked)} />
+          <div>
+            <div className="text-sm font-semibold">
+              ASL Belgisi orqali egalikni tekshirish
+            </div>
+            <div className="text-xs text-muted leading-snug mt-0.5">
+              Yoqilsa — KM ro'yxati yuklanmaydi. Har bir skanerlangan kod ASL
+              orqali tekshiriladi: agar kod shu INN ga tegishli bo'lsa qabul
+              qilinadi, boshqa kompaniyaga tegishli yoki ASL da topilmasa rad
+              etiladi. Internet/aloqa muammosi bo'lsa — alohida ogohlantirish
+              ko'rsatiladi (kod rad etilmaydi, qayta skanerlang).
+            </div>
           </div>
-        </div>
-        <Button variant="outline" size="sm" onClick={addSeries}>
-          <Plus className="size-4" /> Yana seriya qo'shish
-        </Button>
-      </div>
+        </label>
+        {aslOn && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+            <Field label="INN">
+              <Input value={aslInn} onChange={e => setAslInn(e.target.value)}
+                     placeholder="masalan: 312507072" />
+            </Field>
+            <Field label="ASL API kalit">
+              <Input value={aslKey} onChange={e => setAslKey(e.target.value)}
+                     placeholder="Business User API key" />
+            </Field>
+          </div>
+        )}
+      </Card>
 
-      <div className="flex flex-col gap-3 mb-6">
-        {seriesList.map((s, i) => (
-          <SeriesCard key={s.key} idx={i + 1} draft={s}
-                      canRemove={seriesList.length > 1}
-                      onChange={patch => updateSeries(s.key, patch)}
-                      onRemove={() => removeSeries(s.key)}
-                      onFile={f => loadFile(s.key, f)} />
-        ))}
-      </div>
+      {!aslOn && (
+        <div className="mb-4 flex items-baseline justify-between gap-3 flex-wrap">
+          <div>
+            <div className="text-xl font-bold">Seriyalar</div>
+            <div className="text-sm text-muted">
+              Har bir seriya uchun uning KM kodlari ro'yxatini yuklang. Bir kod
+              bir nechta seriyada bo'lishi mumkin — skanerlanganda ikkalasi ham
+              ko'rsatiladi.
+            </div>
+          </div>
+          <Button variant="outline" size="sm" onClick={addSeries}>
+            <Plus className="size-4" /> Yana seriya qo'shish
+          </Button>
+        </div>
+      )}
+
+      {!aslOn && (
+        <div className="flex flex-col gap-3 mb-6">
+          {seriesList.map((s, i) => (
+            <SeriesCard key={s.key} idx={i + 1} draft={s}
+                        canRemove={seriesList.length > 1}
+                        onChange={patch => updateSeries(s.key, patch)}
+                        onRemove={() => removeSeries(s.key)}
+                        onFile={f => loadFile(s.key, f)} />
+          ))}
+        </div>
+      )}
 
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="text-sm text-muted flex items-center gap-3">
-          <ClipboardList className="size-4" /> {seriesList.length} ta seriya
-          <PackageCheck className="size-4 ml-3" /> {totals} ta KM jami yuklangan
+          {aslOn ? (
+            <><ShieldCheck className="size-4" /> ASL egalik tekshiruvi yoqilgan · INN {aslInn || "—"}</>
+          ) : (
+            <>
+              <ClipboardList className="size-4" /> {seriesList.length} ta seriya
+              <PackageCheck className="size-4 ml-3" /> {totals} ta KM jami yuklangan
+            </>
+          )}
         </div>
         <div className="flex gap-2">
           <Button variant="secondary" onClick={onCancel} disabled={busy}>Bekor</Button>

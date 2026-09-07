@@ -177,6 +177,8 @@ def build_state(sess: Session, project_id: int, user_id: int) -> ScanState:
         inventory_series=inv_series,
         business_place_id=project.business_place_id,
         production_order_id=project.production_order_id,
+        asl_check_enabled=bool(getattr(project, "asl_check_enabled", False)),
+        asl_check_inn=getattr(project, "asl_check_inn", "") or "",
     )
 
     return ScanState(

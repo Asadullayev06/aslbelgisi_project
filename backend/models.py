@@ -69,6 +69,12 @@ class Project(Base):
     open_km_pool:        Mapped[bool]     = mapped_column(Boolean, nullable=False, default=False)
     open_box_pool:       Mapped[bool]     = mapped_column(Boolean, nullable=False, default=False)
     status:              Mapped[str]      = mapped_column(Text, nullable=False, default="active")
+    # Inventory "ASL egalik tekshiruvi" mode: when enabled, every scanned code
+    # is checked against ASL 9.3 owner-check for this INN before it's accepted.
+    # The API key must live server-side so any operator's scan can use it.
+    asl_check_enabled:   Mapped[bool]     = mapped_column(Boolean, nullable=False, default=False)
+    asl_check_inn:       Mapped[str]      = mapped_column(Text, nullable=False, default="")
+    asl_check_api_key:   Mapped[str]      = mapped_column(Text, nullable=False, default="")
     created_by:          Mapped[Optional[int]] = mapped_column(BigInteger,
                                                     ForeignKey("users.id", ondelete="SET NULL"),
                                                     nullable=True)
@@ -236,6 +242,32 @@ class LoginEvent(Base):
     __table_args__ = (
         Index("ix_login_events_created", "created_at"),
         Index("ix_login_events_user", "user_id"),
+    )
+
+
+class AslOwnershipCheck(Base):
+    """Cache of ASL 9.3 owner-check verdicts, one row per (project, code).
+
+    Inventory ASL-gate mode calls owner-check once per new code; the verdict
+    is cached here so a re-scan is answered locally ("allaqachon tekshirilgan")
+    and we stay well under ASL's 100-req/min limit. Only decisive verdicts are
+    stored — a transient network/technical failure is never cached, so it
+    retries on the next scan.
+    """
+    __tablename__ = "asl_ownership_checks"
+    id:         Mapped[int]      = mapped_column(BigInteger, primary_key=True)
+    project_id: Mapped[int]      = mapped_column(BigInteger,
+                                        ForeignKey("projects.id", ondelete="CASCADE"),
+                                        nullable=False)
+    km_code:    Mapped[str]      = mapped_column(Text, nullable=False)  # canonical 31 chars
+    verdict:    Mapped[str]      = mapped_column(Text, nullable=False)  # owned|forbidden|missing
+    checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),
+                                        server_default=func.now(), nullable=False)
+    __table_args__ = (
+        UniqueConstraint("project_id", "km_code", name="uq_asl_checks_project_code"),
+        CheckConstraint("verdict IN ('owned','forbidden','missing')",
+                        name="ck_asl_checks_verdict"),
+        Index("ix_asl_checks_project", "project_id"),
     )
 
 

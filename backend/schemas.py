@@ -36,10 +36,21 @@ class InventorySeriesCodes(BaseModel):
 
 class InventoryProjectCreate(BaseModel):
     """Warehouse-inventory project. No SSCC pool, no capacity, no MOD/API key —
-    those are the aggregation workflow only."""
+    those are the aggregation workflow only.
+
+    Two ways to gate scans:
+      * upload a manifest (series + KM codes), OR
+      * enable the ASL ownership check (asl_check_*), where every scanned
+        code is validated against ASL 9.3 owner-check for that INN and no
+        manifest is needed.
+    At least one series is required UNLESS asl_check_enabled is true.
+    """
     name: str = Field(min_length=1)
     product_name: str = Field(min_length=1)
-    series: list[InventorySeriesCodes] = Field(min_length=1)
+    series: list[InventorySeriesCodes] = Field(default_factory=list)
+    asl_check_enabled: bool = False
+    asl_check_inn: str = ""
+    asl_check_api_key: str = ""
 
 
 class ProjectSummary(BaseModel):
@@ -64,6 +75,10 @@ class ProjectPlan(ProjectSummary):
     production_order_id: str
     series: str = ""
     inventory_series: list[str] = []      # inventory mode only
+    # Inventory ASL-gate: true when scans are validated against ASL owner-check.
+    # The stored INN is safe to surface; the API key is NEVER returned.
+    asl_check_enabled: bool = False
+    asl_check_inn: str = ""
 
 
 # ── file parse ──────────────────────────────────────────────

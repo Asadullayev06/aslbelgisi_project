@@ -269,6 +269,72 @@ def expand_transport_to_kms(api_key: str, inn: str, codes: list[str],
     return {"success": True, "km_codes": km_out, "warnings": warnings}
 
 
+def owner_check(api_key: str, inn: str, raw_codes: list[str]) -> dict:
+    """9.3 nested-codes/owner-check — classify each code's ownership.
+
+    Verified live (2026-09-07) against UNIT codes:
+      * owned by this TIN      -> appears in results[].code
+      * owned by a DIFFERENT   -> appears in forbiddenCodes[]
+      * not found in ASL       -> appears in missingCodes[]
+    Response shape: {results:[{code,...}], forbiddenCodes:[str], missingCodes:[str]}
+
+    We send the raw scanned code (with any crypto tail) but key every verdict
+    by the 31-char canonical identity, since results echo the canonical form.
+
+    Returns {"ok": bool, "owned": set, "forbidden": set, "missing": set,
+             "error": str|None} where the sets hold CANONICAL codes. On any
+    network/HTTP error ok=False and the caller must treat those codes as an
+    unresolved TECHNICAL failure (never cache, never silently accept).
+    Chunks to ASL's documented max of 100 codes per request.
+    """
+    from .codes import canonical_km
+
+    owned: set[str] = set()
+    forbidden: set[str] = set()
+    missing: set[str] = set()
+
+    uniq = [c for c in dict.fromkeys(x.strip() for x in raw_codes) if c]
+    for i in range(0, len(uniq), 100):
+        chunk = uniq[i:i + 100]
+        payload = {"codes": chunk, "ownerTin": inn.strip()}
+        try:
+            resp = requests.post(
+                f"{_base()}/public/api/cod/nested-codes/owner-check",
+                headers=_headers(api_key),
+                data=json.dumps(payload),
+                timeout=REQUEST_TIMEOUT,
+            )
+        except requests.RequestException as e:
+            return {"ok": False, "owned": owned, "forbidden": forbidden,
+                    "missing": missing, "error": f"tarmoq xatosi: {e}"}
+        if resp.status_code not in (200, 201):
+            return {"ok": False, "owned": owned, "forbidden": forbidden,
+                    "missing": missing,
+                    "error": f"ASL HTTP {resp.status_code}: {resp.text[:200]}"}
+        try:
+            data = resp.json()
+        except Exception as e:
+            return {"ok": False, "owned": owned, "forbidden": forbidden,
+                    "missing": missing, "error": f"ASL javobi noto'g'ri: {e}"}
+        top = data.get("data", data) if isinstance(data, dict) else data
+        if not isinstance(top, dict):
+            return {"ok": False, "owned": owned, "forbidden": forbidden,
+                    "missing": missing, "error": "ASL javobi kutilmagan shakl"}
+        for item in (top.get("results") or []):
+            code = item.get("code") if isinstance(item, dict) else None
+            if code:
+                owned.add(canonical_km(code))
+        for code in (top.get("forbiddenCodes") or []):
+            if code:
+                forbidden.add(canonical_km(code))
+        for code in (top.get("missingCodes") or []):
+            if code:
+                missing.add(canonical_km(code))
+
+    return {"ok": True, "owned": owned, "forbidden": forbidden,
+            "missing": missing, "error": None}
+
+
 def _flatten_children(payload: Any) -> list[str]:
     """Walk the nested-codes response and pull out every UNIT-level KM.
 

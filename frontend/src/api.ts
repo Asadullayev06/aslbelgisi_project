@@ -110,6 +110,11 @@ export const api = {
   createInventoryProject: (body: {
     name: string; product_name: string;
     series: { name: string; km_codes_text: string }[];
+    /** ASL ownership-gate mode: validate every scan against ASL 9.3 for this
+     *  INN. When enabled, `series` may be empty (no manifest). */
+    asl_check_enabled?: boolean;
+    asl_check_inn?: string;
+    asl_check_api_key?: string;
   }) => req<ScanState>("/api/projects/inventory",
                        { method: "POST", body: JSON.stringify(body) }),
 

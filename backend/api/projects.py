@@ -27,6 +27,7 @@ from ..schemas import (
     ProjectSummary,
     ScanState,
 )
+from ..services import asl_stock
 from ..services.codes import (
     parse_box_file,
     parse_box_pool_text,
@@ -167,9 +168,26 @@ def create_inventory_project(
     both Series A and B is scanned, both rows get marked matched, and the
     box view reports both series.
     """
+    # ASL ownership-gate mode: no manifest needed — every scan is validated
+    # against ASL. Requires INN + API key.
+    asl_enabled = bool(body.asl_check_enabled)
+    asl_inn = (body.asl_check_inn or "").strip()
+    asl_key = (body.asl_check_api_key or "").strip()
+    if asl_enabled:
+        if not asl_inn or not asl_key:
+            raise HTTPException(400, "ASL tekshiruvi uchun INN va API kalit kerak")
+        # Fail fast if the key/INN are wrong, rather than at first scan.
+        v = asl_stock.verify_api_key_ownership(asl_inn, asl_key)
+        if not v.get("success"):
+            raise HTTPException(400, f"ASL API kalitni tekshirib bo'lmadi: {v.get('error','')}")
+        data = v.get("data") or {}
+        if isinstance(data, dict) and data.get("isTinCorrect") is False:
+            raise HTTPException(400, "API kalit ushbu INN ga tegishli emas")
+
     # Validate every series and its codes up front, so a partial project
-    # can't survive a mid-loop failure.
-    if not body.series:
+    # can't survive a mid-loop failure. In ASL-gate mode a manifest is
+    # optional (and usually absent).
+    if not body.series and not asl_enabled:
         raise HTTPException(400, "kamida bitta seriya kerak")
 
     series_seen: set[str] = set()
@@ -195,6 +213,9 @@ def create_inventory_project(
         business_place_id="", production_order_id="",
         status="active",
         mode="inventory",
+        asl_check_enabled=asl_enabled,
+        asl_check_inn=asl_inn if asl_enabled else "",
+        asl_check_api_key=asl_key if asl_enabled else "",
         created_by=u.id,
     )
     sess.add(project)

@@ -38,10 +38,14 @@ export interface ProjectPlan {
   production_order_id: string;
   series?: string;
   inventory_series?: string[];       // inventory only
+  asl_check_enabled?: boolean;       // inventory ASL-gate mode
+  asl_check_inn?: string;
   mode?: ProjectMode;
   status: "active" | "submitting" | "submitted" | "archived";
   created_at: string;
 }
+
+// (ProjectSummary carries the same two ASL-gate fields below.)
 
 export interface ProjectSummary {
   id: number;

@@ -19,8 +19,11 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from ..models import Box, BoxPool, KmPool, OpenBox, Project, ScanEvent, User
+from ..models import (
+    AslOwnershipCheck, Box, BoxPool, KmPool, OpenBox, Project, ScanEvent, User,
+)
 from .codes import canonical_km, classify_scan, normalize_sscc
+from . import asl_stock
 
 # Bound the work in one transaction. The client sends whatever has piled up in
 # its queue; anything past this is simply handled by the next request.
@@ -402,8 +405,19 @@ def scan_batch(sess: Session, project_id: int, user_id: int,
         else:
             results[i] = _err(f"tanib bo'lmadigan skaner: {raw[:40]}")
 
-    ob = _get_or_create_open_box(sess, project_id, user_id, lock=True)
     is_inventory = (project.mode == "inventory")
+
+    # Inventory ASL-gate: resolve ownership for every KM in the batch BEFORE
+    # taking the open-box lock, so the (possibly multi-second, rate-limited)
+    # ASL network call never blocks the DB row lock. Produces:
+    #   verdict_map:  canonical -> 'owned' | 'forbidden' | 'missing' | 'error'
+    #   from_cache:   canonicals that were already decided in a prior scan
+    verdict_map: dict[str, str] = {}
+    from_cache: set[str] = set()
+    if is_inventory and getattr(project, "asl_check_enabled", False):
+        verdict_map, from_cache = _resolve_ownership(sess, project, parsed)
+
+    ob = _get_or_create_open_box(sess, project_id, user_id, lock=True)
 
     # For aggregation projects, admin can now create the loyiha without
     # pre-uploading the KM list, the SSCC list, or either. The flags are
@@ -420,7 +434,8 @@ def scan_batch(sess: Session, project_id: int, user_id: int,
             continue
         if run:
             if is_inventory:
-                _inv_claim_run(sess, project, user_id, ob, run, results, attempt)
+                _inv_claim_run(sess, project, user_id, ob, run, results, attempt,
+                               verdict_map=verdict_map, from_cache=from_cache)
             else:
                 _claim_km_run(sess, project, user_id, ob, run, results, attempt,
                               km_open=km_open)
@@ -435,7 +450,8 @@ def scan_batch(sess: Session, project_id: int, user_id: int,
         ob = _get_or_create_open_box(sess, project_id, user_id, lock=True)
     if run:
         if is_inventory:
-            _inv_claim_run(sess, project, user_id, ob, run, results, attempt)
+            _inv_claim_run(sess, project, user_id, ob, run, results, attempt,
+                           verdict_map=verdict_map, from_cache=from_cache)
         else:
             _claim_km_run(sess, project, user_id, ob, run, results, attempt,
                           km_open=km_open)
@@ -466,14 +482,92 @@ def _inv_extra_key(km: str) -> str:
     return km    # kept as its own helper so grep is easy to reason about
 
 
+def _resolve_ownership(sess: Session, project: Project,
+                       parsed: list[tuple[int, str, str, str]]
+                       ) -> tuple[dict[str, str], set[str]]:
+    """Return (verdict_map, from_cache) for every KM canonical in the batch.
+
+    verdict_map: canonical -> 'owned'|'forbidden'|'missing'|'error'
+    from_cache:  canonicals whose verdict was already stored from a prior scan
+
+    Cached decisive verdicts are reused (so a re-scan is answered locally and
+    we stay under ASL's 100/min cap); only unseen codes hit ASL. A technical
+    failure yields 'error' for the affected codes and is NOT cached.
+    """
+    # canonical -> a raw scanned string to send to ASL (first occurrence)
+    raw_by_canon: dict[str, str] = {}
+    for _idx, kind, raw, code in parsed:
+        if kind == "km" and code not in raw_by_canon:
+            raw_by_canon[code] = raw
+    if not raw_by_canon:
+        return {}, set()
+
+    canons = list(raw_by_canon)
+    verdict_map: dict[str, str] = {}
+    from_cache: set[str] = set()
+
+    cached = sess.execute(
+        select(AslOwnershipCheck.km_code, AslOwnershipCheck.verdict)
+        .where(AslOwnershipCheck.project_id == project.id,
+               AslOwnershipCheck.km_code.in_(canons))
+    ).all()
+    for km_code, verdict in cached:
+        verdict_map[km_code] = verdict
+        from_cache.add(km_code)
+
+    todo = [c for c in canons if c not in verdict_map]
+    if not todo:
+        return verdict_map, from_cache
+
+    res = asl_stock.owner_check(
+        project.asl_check_api_key, project.asl_check_inn,
+        [raw_by_canon[c] for c in todo],
+    )
+    if not res.get("ok"):
+        # Technical failure — mark unresolved, do NOT cache.
+        for c in todo:
+            verdict_map[c] = "error"
+        return verdict_map, from_cache
+
+    owned, forbidden, missing = res["owned"], res["forbidden"], res["missing"]
+    to_store: list[dict] = []
+    for c in todo:
+        if c in owned:
+            v = "owned"
+        elif c in forbidden:
+            v = "forbidden"
+        elif c in missing:
+            v = "missing"
+        else:
+            # ASL returned OK but said nothing about this code — treat as
+            # unresolved (retry next scan), don't guess and don't cache.
+            verdict_map[c] = "error"
+            continue
+        verdict_map[c] = v
+        to_store.append({"project_id": project.id, "km_code": c, "verdict": v})
+
+    if to_store:
+        sess.execute(
+            pg_insert(AslOwnershipCheck)
+            .values(to_store)
+            .on_conflict_do_nothing(index_elements=["project_id", "km_code"])
+        )
+    return verdict_map, from_cache
+
+
 def _inv_claim_run(sess: Session, project: Project, user_id: int, ob: OpenBox,
                    run: list[tuple[int, str, str]],
-                   results: list[Optional[dict]], attempt: int) -> None:
+                   results: list[Optional[dict]], attempt: int,
+                   verdict_map: Optional[dict[str, str]] = None,
+                   from_cache: Optional[set[str]] = None) -> None:
     """Match a KM run against the manifest, insert extras where needed.
 
     Same in-batch dedupe as aggregation: the same code twice in one batch is
     a double scan and only the first is accepted.
     """
+    verdict_map = verdict_map or {}
+    from_cache = from_cache or set()
+
     # In-burst dedupe.
     seen: set[str] = set()
     todo: list[tuple[int, str, str]] = []
@@ -486,6 +580,34 @@ def _inv_claim_run(sess: Session, project: Project, user_id: int, ob: OpenBox,
             todo.append((idx, raw, km))
     if not todo:
         return
+
+    # ASL ownership gate. Anything not confirmed OWNED is rejected before it
+    # can enter the pool. A technical failure is flagged distinctly (worker
+    # must know it's a connection problem, NOT that the code is foreign) and
+    # is never accepted or cached, so a re-scan retries it.
+    if verdict_map:
+        kept: list[tuple[int, str, str]] = []
+        for idx, raw, km in todo:
+            verdict = verdict_map.get(km, "error")
+            if verdict == "owned":
+                kept.append((idx, raw, km))
+            elif verdict == "forbidden":
+                pre = "avval tekshirilgan — " if km in from_cache else ""
+                results[idx] = _err(
+                    f"{pre}boshqa kompaniyaga tegishli: {km}",
+                    kind="km", code=km, asl_foreign=True)
+            elif verdict == "missing":
+                pre = "avval tekshirilgan — " if km in from_cache else ""
+                results[idx] = _err(
+                    f"{pre}ASL da topilmadi (kompaniyaga tegishli emas): {km}",
+                    kind="km", code=km, asl_foreign=True)
+            else:  # error — ASL couldn't be reached / technical problem
+                results[idx] = _err(
+                    f"TEXNIK XATO — ASL bilan bog'lanib bo'lmadi, qayta skanerlang: {km}",
+                    kind="km", code=km, asl_tech_error=True)
+        todo = kept
+        if not todo:
+            return
 
     codes = [km for (_, _, km) in todo]
 
@@ -576,6 +698,12 @@ def _inv_claim_run(sess: Session, project: Project, user_id: int, ob: OpenBox,
                 f"qabul qilindi ({n}) · seriya: {joined} · {km}",
                 current=n, kind="km", code=km,
                 matched_series=matched_series)
+        elif verdict_map:
+            # ASL-gate standalone mode: there is no manifest, so a code that
+            # ASL confirmed as OWNED is a clean accept — not an "extra".
+            results[idx] = _hit(
+                f"qabul qilindi ({n}) · ASL tasdiqladi · {km}",
+                current=n, kind="km", code=km, matched_series=[])
         else:
             # Not in the manifest — still accepted (this is what the operator
             # is here to discover), but flagged prominently so the UI can pop

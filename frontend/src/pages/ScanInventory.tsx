@@ -48,7 +48,8 @@ export function ScanInventory({ projectId, onExit }: Props) {
   const [stalled, setStalled] = useState(false);
 
   // Loud alert bar for rejects/extras — the OPERATOR-facing surface.
-  type Alert = { code: string; reason: string; kind: "extra" | "duplicate" | "unknown" };
+  type Alert = { code: string; reason: string;
+                 kind: "extra" | "duplicate" | "foreign" | "tech" | "unknown" };
   const [alert, setAlert] = useState<Alert | null>(null);
 
   // Session rejects (still visible in a small list below).
@@ -166,7 +167,9 @@ export function ScanInventory({ projectId, onExit }: Props) {
               // duplicate, else generic.
               const msg = first.message;
               const kind: Alert["kind"] =
-                msg.includes("RO'YXATDA YO'Q") ? "extra"
+                msg.includes("TEXNIK XATO") ? "tech"
+                : msg.includes("tegishli") || msg.includes("topilmadi") ? "foreign"
+                : msg.includes("RO'YXATDA YO'Q") ? "extra"
                 : msg.includes("takroriy") || msg.includes("ishlatilgan") ? "duplicate"
                 : "unknown";
               setAlert({ code: first.code, reason: first.message, kind });
@@ -326,14 +329,21 @@ export function ScanInventory({ projectId, onExit }: Props) {
       {alert && (
         <div className={cn(
           "mb-4 rounded-2xl border-4 p-5 flex items-start gap-4 shadow-lg",
-          alert.kind === "extra"
-            ? "border-danger bg-danger/15 text-danger animate-pulse"
-            : "border-danger bg-danger/10 text-danger",
+          // A technical (ASL unreachable) alert is NOT a rejection of the
+          // code — colour it amber so the worker reads it as "retry", not
+          // "wrong code". Everything else is a red stop.
+          alert.kind === "tech"
+            ? "border-warning bg-warning/15 text-warning"
+            : alert.kind === "extra" || alert.kind === "foreign"
+              ? "border-danger bg-danger/15 text-danger animate-pulse"
+              : "border-danger bg-danger/10 text-danger",
         )}>
           <AlertTriangle className="size-10 shrink-0" />
           <div className="flex-1 min-w-0">
             <div className="text-2xl font-black uppercase tracking-wide">
-              {alert.kind === "extra"    && "RO'YXATDA YO'Q KOD"}
+              {alert.kind === "extra"     && "RO'YXATDA YO'Q KOD"}
+              {alert.kind === "foreign"   && "KOMPANIYAGA TEGISHLI EMAS"}
+              {alert.kind === "tech"      && "ASL BILAN ALOQA YO'Q — QAYTA SKANERLANG"}
               {alert.kind === "duplicate" && "TAKRORIY YOKI IShLATILGAN KOD"}
               {alert.kind === "unknown"   && "SKANERLASHDA XATO"}
             </div>
@@ -354,7 +364,14 @@ export function ScanInventory({ projectId, onExit }: Props) {
         <div className="flex items-center gap-3">
           <div className="text-right">
             <div className="text-2xl font-extrabold tracking-tight text-warning">{p.name}</div>
-            <div className="text-muted text-sm">{p.product_name} · inventarizatsiya</div>
+            <div className="text-muted text-sm">
+              {p.product_name} · inventarizatsiya
+              {p.asl_check_enabled && (
+                <span className="ml-2 text-accent font-semibold">
+                  · ASL tekshiruvi ({p.asl_check_inn})
+                </span>
+              )}
+            </div>
           </div>
         </div>
       </div>
