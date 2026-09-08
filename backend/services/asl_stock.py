@@ -278,8 +278,9 @@ def owner_check(api_key: str, inn: str, raw_codes: list[str]) -> dict:
       * not found in ASL       -> appears in missingCodes[]
     Response shape: {results:[{code,...}], forbiddenCodes:[str], missingCodes:[str]}
 
-    We send the raw scanned code (with any crypto tail) but key every verdict
-    by the 31-char canonical identity, since results echo the canonical form.
+    Pass the 31-char CANONICAL codes (NOT the raw DataMatrix scan): a code
+    carrying the AI-91/92 crypto tail comes back as `missing`. Verdicts are
+    keyed by canonical, which is also what results[] echoes back.
 
     Returns {"ok": bool, "owned": set, "forbidden": set, "missing": set,
              "error": str|None} where the sets hold CANONICAL codes. On any

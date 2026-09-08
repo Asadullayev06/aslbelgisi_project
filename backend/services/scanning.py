@@ -494,15 +494,15 @@ def _resolve_ownership(sess: Session, project: Project,
     we stay under ASL's 100/min cap); only unseen codes hit ASL. A technical
     failure yields 'error' for the affected codes and is NOT cached.
     """
-    # canonical -> a raw scanned string to send to ASL (first occurrence)
-    raw_by_canon: dict[str, str] = {}
-    for _idx, kind, raw, code in parsed:
-        if kind == "km" and code not in raw_by_canon:
-            raw_by_canon[code] = raw
-    if not raw_by_canon:
+    # ASL owner-check must be sent the 31-char CANONICAL identity, NOT the raw
+    # scanned string. A physical DataMatrix scan carries the AI-91/92 crypto
+    # tail (e.g. "...F7E8qqZYnDqB0 91UZF0 92<sig>"), and owner-check returns
+    # such a code as `missing` — it only matches on the bare sGTIN. Verified
+    # live 2026-09-08: full raw -> missing; 31-char canonical -> owned/forbidden.
+    canons = list(dict.fromkeys(
+        code for _idx, kind, _raw, code in parsed if kind == "km"))
+    if not canons:
         return {}, set()
-
-    canons = list(raw_by_canon)
     verdict_map: dict[str, str] = {}
     from_cache: set[str] = set()
 
@@ -520,8 +520,7 @@ def _resolve_ownership(sess: Session, project: Project,
         return verdict_map, from_cache
 
     res = asl_stock.owner_check(
-        project.asl_check_api_key, project.asl_check_inn,
-        [raw_by_canon[c] for c in todo],
+        project.asl_check_api_key, project.asl_check_inn, todo,
     )
     if not res.get("ok"):
         # Technical failure — mark unresolved, do NOT cache.
