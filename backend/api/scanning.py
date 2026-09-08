@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 from ..auth import current_user, require_admin
 from ..db import get_session
-from ..models import Box, KmPool, Project, ScanEvent, User
+from ..models import AslOwnershipCheck, Box, KmPool, Project, ScanEvent, User
 from ..schemas import (
     LooseModeRequest,
     ScanBatchRequest,
@@ -204,33 +204,48 @@ def box_contents(project_id: int, box_id: int,
     if box is None or box.project_id != project_id:
         raise HTTPException(404, "quti topilmadi")
 
-    # Fetch each row for this box, and (via LEFT JOIN on a self-alias) the
-    # planned rows for the same km_code in this project. Group by km_code so
-    # a code that matches multiple series gets one row with an aggregated
-    # list of series.
-    planned = aliased(KmPool)
-    rows = list(sess.execute(
-        select(KmPool.km_code,
-               func.array_agg(func.distinct(planned.series))
-                   .filter(and_(planned.id.isnot(None), planned.series != "")))
-        .join(planned,
-              and_(planned.project_id == project_id,
-                   planned.km_code == KmPool.km_code),
-              isouter=True)
-        .where(KmPool.box_id == box_id)
-        .group_by(KmPool.km_code)
-        .order_by(KmPool.km_code.asc())
-    ))
+    project = sess.get(Project, project_id)
+    asl_gate = bool(getattr(project, "asl_check_enabled", False))
 
     matched: list[BoxCodeOut] = []
     extras: list[BoxCodeOut] = []
-    for km, series_arr in rows:
-        series_list = [s for s in (series_arr or []) if s]
-        item = BoxCodeOut(km_code=km, matched_series=sorted(series_list))
-        if series_list:
-            matched.append(item)
-        else:
-            extras.append(item)
+
+    if asl_gate:
+        # ASL-gate mode: there is no manifest. matched = ASL confirmed OWNED,
+        # extra = anything else, from the ownership verdict cache.
+        rows = list(sess.execute(
+            select(KmPool.km_code, AslOwnershipCheck.verdict)
+            .join(AslOwnershipCheck,
+                  and_(AslOwnershipCheck.project_id == project_id,
+                       AslOwnershipCheck.km_code == KmPool.km_code),
+                  isouter=True)
+            .where(KmPool.box_id == box_id)
+            .group_by(KmPool.km_code, AslOwnershipCheck.verdict)
+            .order_by(KmPool.km_code.asc())
+        ))
+        for km, verdict in rows:
+            item = BoxCodeOut(km_code=km, matched_series=[])
+            (matched if verdict == "owned" else extras).append(item)
+    else:
+        # Manifest mode: matched = code has a planned row with a non-empty
+        # series; group by km_code so multi-series codes get one aggregated row.
+        planned = aliased(KmPool)
+        rows = list(sess.execute(
+            select(KmPool.km_code,
+                   func.array_agg(func.distinct(planned.series))
+                       .filter(and_(planned.id.isnot(None), planned.series != "")))
+            .join(planned,
+                  and_(planned.project_id == project_id,
+                       planned.km_code == KmPool.km_code),
+                  isouter=True)
+            .where(KmPool.box_id == box_id)
+            .group_by(KmPool.km_code)
+            .order_by(KmPool.km_code.asc())
+        ))
+        for km, series_arr in rows:
+            series_list = [s for s in (series_arr or []) if s]
+            item = BoxCodeOut(km_code=km, matched_series=sorted(series_list))
+            (matched if series_list else extras).append(item)
 
     return BoxContentsOut(
         box_id=box.id, sscc=box.sscc, is_loose=box.is_loose,
@@ -308,6 +323,21 @@ def inventory_export(project_id: int,
         for km, raw in raw_rows:
             raw_by_km[km] = raw
 
+    # ASL-gate mode has no manifest, so mos/ekstra comes from the ownership
+    # verdict cache: owned = mos, anything else = ekstra.
+    asl_gate = bool(getattr(project, "asl_check_enabled", False))
+    owned_set: set[str] = set()
+    if asl_gate and rows:
+        owned_set = {
+            c for (c,) in sess.execute(
+                select(AslOwnershipCheck.km_code).where(
+                    AslOwnershipCheck.project_id == project_id,
+                    AslOwnershipCheck.verdict == "owned",
+                    AslOwnershipCheck.km_code.in_([r[0] for r in rows]),
+                )
+            )
+        }
+
     wb = Workbook()
     ws = wb.active
     ws.title = "Inventarizatsiya"
@@ -330,7 +360,10 @@ def inventory_export(project_id: int,
 
     for km, sscc, is_loose, series_arr in rows:
         series_list = sorted(s for s in (series_arr or []) if s)
-        status = "mos" if series_list else "ekstra"
+        if asl_gate:
+            status = "mos" if km in owned_set else "ekstra"
+        else:
+            status = "mos" if series_list else "ekstra"
         raw = raw_by_km.get(km) or km       # fallback if no audit row
         row_idx = ws.max_row + 1
         ws.append([str(raw), str(km), str(sscc),

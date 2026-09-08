@@ -563,6 +563,7 @@ export function ScanInventory({ projectId, onExit }: Props) {
                     )}
                     {isOpen && cur !== "loading" && typeof cur === "object" && (
                       <BoxContentsPanel box={cur} admin={admin}
+                                        aslGate={!!p.asl_check_enabled}
                                         onDelete={admin ? () => deleteBox(b.id) : undefined} />
                     )}
                   </div>
@@ -578,15 +579,15 @@ export function ScanInventory({ projectId, onExit }: Props) {
   );
 }
 
-function BoxContentsPanel({ box, admin, onDelete }: {
-  box: BoxContents; admin: boolean; onDelete?: () => void;
+function BoxContentsPanel({ box, admin, onDelete, aslGate }: {
+  box: BoxContents; admin: boolean; onDelete?: () => void; aslGate?: boolean;
 }) {
   return (
     <div className="border-t border-border p-3 space-y-3 bg-surface2/20">
       {box.matched.length > 0 && (
         <div>
           <div className="text-[11px] uppercase tracking-widest text-success mb-1">
-            Ro'yxatga mos ({box.matched.length})
+            {aslGate ? "Kompaniyaga tegishli (ASL)" : "Ro'yxatga mos"} ({box.matched.length})
           </div>
           <div className="rounded border border-border bg-surface2/40 max-h-64 overflow-auto">
             <ul className="divide-y divide-border">
@@ -605,7 +606,7 @@ function BoxContentsPanel({ box, admin, onDelete }: {
       {box.extras.length > 0 && (
         <div>
           <div className="text-[11px] uppercase tracking-widest text-danger mb-1">
-            RO'YXATDA YO'Q — EKSTRA ({box.extras.length})
+            {aslGate ? "KOMPANIYAGA TEGISHLI EMAS" : "RO'YXATDA YO'Q — EKSTRA"} ({box.extras.length})
           </div>
           <div className="rounded border border-danger/40 bg-danger/5 max-h-64 overflow-auto">
             <ul className="divide-y divide-danger/20">
@@ -635,18 +636,24 @@ function AiCard({ state }: { state: ScanState }) {
   // total_km on the state is planned-distinct; scanned that were NOT
   // planned = extras across boxes + extras in the open box.
   const extras = state.closed_boxes.reduce((a, b) => a + (b.extra_count ?? 0), 0);
+  const aslGate = !!state.project.asl_check_enabled;
   return (
     <Card>
       <CardHead title="Tahlil"
                 right={<Badge tone="warning"><Sparkles className="size-3" /> jonli</Badge>} />
       <div className="grid grid-cols-2 gap-3">
-        <Metric label="Reja bo'yicha yuklangan"  value={state.total_km} tone="text" />
+        <Metric label={aslGate ? "Jami tekshirilgan" : "Reja bo'yicha yuklangan"}
+                value={state.total_km} tone="text" />
         <Metric label="Ombordan skanerlangan"    value={totalScannedDistinct} tone="success" />
-        <Metric label="Ro'yxatdan mos"           value={state.aggregated_km - extras} tone="success" />
-        <Metric label="Ekstra (ro'yxatda yo'q)"  value={extras} tone={extras ? "danger" : "text"} />
+        <Metric label={aslGate ? "Kompaniyaga tegishli (ASL)" : "Ro'yxatdan mos"}
+                value={state.aggregated_km - extras} tone="success" />
+        <Metric label={aslGate ? "Tegishli emas" : "Ekstra (ro'yxatda yo'q)"}
+                value={extras} tone={extras ? "danger" : "text"} />
       </div>
       <div className="text-xs text-muted mt-3">
-        Har bir quti ochilganda ro'yxatga mos va ekstra kodlar alohida ko'rinadi.
+        {aslGate
+          ? "Har bir quti ochilganda ASL tasdiqlagan va tegishli bo'lmagan kodlar alohida ko'rinadi."
+          : "Har bir quti ochilganda ro'yxatga mos va ekstra kodlar alohida ko'rinadi."}
       </div>
     </Card>
   );

@@ -580,30 +580,21 @@ def _inv_claim_run(sess: Session, project: Project, user_id: int, ob: OpenBox,
     if not todo:
         return
 
-    # ASL ownership gate. Anything not confirmed OWNED is rejected before it
-    # can enter the pool. A technical failure is flagged distinctly (worker
-    # must know it's a connection problem, NOT that the code is foreign) and
-    # is never accepted or cached, so a re-scan retries it.
+    # ASL ownership gate. Like the manifest flow (see Moveril), EVERY code is
+    # accepted into the box and then LABELLED: OWNED -> matched (moslik),
+    # forbidden/missing -> extra (ekstra). Only a TECHNICAL failure is held
+    # back — we can't classify a code we couldn't reach ASL for, so it's
+    # flagged distinctly (a connection problem, NOT a foreign code) and left
+    # for a re-scan; it is never accepted or cached.
     if verdict_map:
         kept: list[tuple[int, str, str]] = []
         for idx, raw, km in todo:
-            verdict = verdict_map.get(km, "error")
-            if verdict == "owned":
-                kept.append((idx, raw, km))
-            elif verdict == "forbidden":
-                pre = "avval tekshirilgan — " if km in from_cache else ""
-                results[idx] = _err(
-                    f"{pre}boshqa kompaniyaga tegishli: {km}",
-                    kind="km", code=km, asl_foreign=True)
-            elif verdict == "missing":
-                pre = "avval tekshirilgan — " if km in from_cache else ""
-                results[idx] = _err(
-                    f"{pre}ASL da topilmadi (kompaniyaga tegishli emas): {km}",
-                    kind="km", code=km, asl_foreign=True)
-            else:  # error — ASL couldn't be reached / technical problem
+            if verdict_map.get(km, "error") == "error":
                 results[idx] = _err(
                     f"TEXNIK XATO — ASL bilan bog'lanib bo'lmadi, qayta skanerlang: {km}",
                     kind="km", code=km, asl_tech_error=True)
+            else:
+                kept.append((idx, raw, km))   # owned / forbidden / missing
         todo = kept
         if not todo:
             return
@@ -698,11 +689,17 @@ def _inv_claim_run(sess: Session, project: Project, user_id: int, ob: OpenBox,
                 current=n, kind="km", code=km,
                 matched_series=matched_series)
         elif verdict_map:
-            # ASL-gate standalone mode: there is no manifest, so a code that
-            # ASL confirmed as OWNED is a clean accept — not an "extra".
-            results[idx] = _hit(
-                f"qabul qilindi ({n}) · ASL tasdiqladi · {km}",
-                current=n, kind="km", code=km, matched_series=[])
+            # ASL-gate mode: classify by the ASL verdict.
+            if verdict_map.get(km) == "owned":
+                results[idx] = _hit(
+                    f"qabul qilindi ({n}) · ASL tasdiqladi · {km}",
+                    current=n, kind="km", code=km, matched_series=[])
+            else:
+                # forbidden / missing — accepted but flagged as extra, so the
+                # box view shows it under "kompaniyaga tegishli emas".
+                results[idx] = _warn(
+                    f"RO'YXATDA YO'Q (kompaniyaga tegishli emas) — qabul qilindi ({n}) · {km}",
+                    current=n, kind="km", code=km, extra=True, matched_series=[])
         else:
             # Not in the manifest — still accepted (this is what the operator
             # is here to discover), but flagged prominently so the UI can pop

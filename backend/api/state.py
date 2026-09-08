@@ -4,7 +4,7 @@ from __future__ import annotations
 from sqlalchemy import and_, desc, func, select
 from sqlalchemy.orm import Session, aliased
 
-from ..models import Box, BoxPool, KmPool, OpenBox, Project
+from ..models import AslOwnershipCheck, Box, BoxPool, KmPool, OpenBox, Project
 from ..schemas import ClosedBoxOut, MissingPreview, ProjectPlan, ScanState
 
 MISSING_PREVIEW_LIMIT = 16
@@ -60,13 +60,33 @@ def build_state(sess: Session, project_id: int, user_id: int) -> ScanState:
             .group_by(Box.id)
             .order_by(Box.closed_at.asc(), Box.id.asc())
         ))
-        # One extra query to count "extras per box" — a km inside the box for
-        # which the project has ZERO planned (series != '') rows. NOT EXISTS
-        # against an aliased KmPool row keeps this as a single query.
-        planned = aliased(KmPool)
+        # Count "extras per box". In manifest mode an extra is a code with no
+        # planned (series != '') row. In ASL-gate mode there is no manifest —
+        # matched = ASL confirmed OWNED, extra = anything else (forbidden /
+        # missing / not-yet-resolved), read from the ownership verdict cache.
         box_ids = [b.id for (b, _c) in box_rows]
         extras_by_box: dict[int, int] = {}
-        if box_ids:
+        asl_gate = bool(getattr(project, "asl_check_enabled", False))
+        if box_ids and asl_gate:
+            owned_q = (
+                select(AslOwnershipCheck.id).where(
+                    AslOwnershipCheck.project_id == project_id,
+                    AslOwnershipCheck.km_code == KmPool.km_code,
+                    AslOwnershipCheck.verdict == "owned",
+                )
+            )
+            extras_by_box = dict(sess.execute(
+                select(KmPool.box_id,
+                       func.count(func.distinct(KmPool.km_code)))
+                .where(
+                    KmPool.box_id.in_(box_ids),
+                    KmPool.project_id == project_id,
+                    ~owned_q.exists(),
+                )
+                .group_by(KmPool.box_id)
+            ).all())
+        elif box_ids:
+            planned = aliased(KmPool)
             extras_by_box = dict(sess.execute(
                 select(KmPool.box_id,
                        func.count(func.distinct(KmPool.km_code)))
