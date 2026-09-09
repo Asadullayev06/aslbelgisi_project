@@ -34,18 +34,35 @@ router = APIRouter(prefix="/api/bartender", tags=["bartender"])
 _ZWSP = "​"
 
 
-def _clean_code(s: str) -> str:
-    """Normalise one raw code to the flush KM string the printer expects.
+GS = "\x1d"   # GS1 Group Separator (U+001D) — separates a KM's AI segments
 
-    A KM's AI-91/AI-92 segments are separated by GS (U+001D). Excel stores
-    that control char as the literal escape `_x001D_`, and openpyxl hands it
-    back either as that 7-char literal or as the real 0x1D — either way it was
-    leaking into column A (e.g. `…Aszvfi_x001D_91UZF0_x001D_92…`). Undo the
-    `_xHHHH_` escapes, then drop every whitespace/control character so the
-    segments sit flush (`…Aszvfi91UZF092…`), matching the source file.
+
+def _clean_code(s: str) -> str:
+    """Normalise one raw code while KEEPING its AI separators.
+
+    A KM's AI-91/AI-92 segments are separated by the GS control char
+    (U+001D). That separator MUST survive — a printed KM DataMatrix is
+    invalid without it (identity | 91<key> | 92<sig>). The bugs to fix are
+    only in how the separator is *represented*:
+
+      * Excel stores GS as the literal escape `_x001D_`; openpyxl hands it
+        back either as that 7-char literal or as the real 0x1D. Unescape it
+        so it becomes a real GS, never the visible text `_x001D_`.
+      * Some exports render the separator as a run of spaces instead of GS.
+
+    So: unescape `_xHHHH_` → real char, drop CR/LF/TAB (line noise that would
+    break a CSV row), trim the ends, and collapse any internal run of spaces
+    into a single GS. The GS itself is preserved. Result keeps the segments
+    separated (`…Izkb2<GS>91UZF0<GS>92QmNP…`) exactly as the DataMatrix needs.
     """
+    import re
     s = unescape_xml_controls(s)
-    return "".join(ch for ch in s if not ch.isspace() and ch.isprintable())
+    s = s.replace("\r", "").replace("\n", "").replace("\t", "").strip()
+    # A run of spaces between segments = a separator that lost its GS on
+    # export; normalise it to a real GS. (KM payloads are base64-ish and
+    # never contain legitimate internal spaces.)
+    s = re.sub(r" +", GS, s)
+    return s
 
 
 def _read_rows(name: str, raw: bytes) -> list[str]:
@@ -84,17 +101,17 @@ def _read_rows(name: str, raw: bytes) -> list[str]:
             for v in row.tolist():
                 if v is None:
                     continue
-                s = str(v).strip()
+                s = _clean_code(str(v))
                 if not s or s.lower() == "nan":
                     continue
                 parts.append(s)
             if parts:
-                # Concatenate with NO separator — the AI91/AI92 chunks are
-                # meant to sit flush against the identity in a KM string
-                # (`…QdXq91+mwo92+iVlL…`, not `…QdXq 91+mwo 92+iVlL…`).
-                # _clean_code also unescapes `_x001D_` and drops any GS/control
-                # chars so the printed code has no separators.
-                joined = _clean_code("".join(parts))
+                # If the code was split across several cells (identity | AI91
+                # chunk | AI92 chunk), the cell boundaries ARE the AI
+                # separators, so rejoin them with a GS. A single cell already
+                # carries its own GS separators from _clean_code, so this is a
+                # no-op for the common one-cell-per-row file.
+                joined = GS.join(parts)
                 if joined:
                     out.append(joined)
         return out
@@ -115,8 +132,8 @@ def _read_rows(name: str, raw: bytes) -> list[str]:
         text = raw
     out = []
     for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
-        # _clean_code collapses whitespace, unescapes `_x001D_`, and strips
-        # any GS/control chars so the emitted code is the flush KM string.
+        # _clean_code unescapes `_x001D_` to a real GS and KEEPS it as the AI
+        # separator (normalising any space-run separator to GS too).
         s = _clean_code(line)
         if s:
             out.append(s)
