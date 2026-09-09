@@ -25,12 +25,27 @@ from fastapi.responses import Response
 
 from ..auth import current_user
 from ..models import User
+from ..services.codes import unescape_xml_controls
 
 router = APIRouter(prefix="/api/bartender", tags=["bartender"])
 
 # Zero-width space — forces Excel to treat the cell as text so "1-450"
 # doesn't become a date and long tokens don't become scientific notation.
 _ZWSP = "​"
+
+
+def _clean_code(s: str) -> str:
+    """Normalise one raw code to the flush KM string the printer expects.
+
+    A KM's AI-91/AI-92 segments are separated by GS (U+001D). Excel stores
+    that control char as the literal escape `_x001D_`, and openpyxl hands it
+    back either as that 7-char literal or as the real 0x1D — either way it was
+    leaking into column A (e.g. `…Aszvfi_x001D_91UZF0_x001D_92…`). Undo the
+    `_xHHHH_` escapes, then drop every whitespace/control character so the
+    segments sit flush (`…Aszvfi91UZF092…`), matching the source file.
+    """
+    s = unescape_xml_controls(s)
+    return "".join(ch for ch in s if not ch.isspace() and ch.isprintable())
 
 
 def _read_rows(name: str, raw: bytes) -> list[str]:
@@ -77,12 +92,11 @@ def _read_rows(name: str, raw: bytes) -> list[str]:
                 # Concatenate with NO separator — the AI91/AI92 chunks are
                 # meant to sit flush against the identity in a KM string
                 # (`…QdXq91+mwo92+iVlL…`, not `…QdXq 91+mwo 92+iVlL…`).
-                # Also collapse any internal whitespace inside the source
-                # cells so a "one cell per row with visible spaces" file
-                # produces the same clean output as a "three cells" one.
-                joined = "".join(parts)
-                joined = "".join(joined.split())    # strip ALL whitespace
-                out.append(joined)
+                # _clean_code also unescapes `_x001D_` and drops any GS/control
+                # chars so the printed code has no separators.
+                joined = _clean_code("".join(parts))
+                if joined:
+                    out.append(joined)
         return out
 
     # text / csv / tsv / whatever — one line = one code, verbatim
@@ -101,10 +115,9 @@ def _read_rows(name: str, raw: bytes) -> list[str]:
         text = raw
     out = []
     for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
-        # Collapse any internal whitespace inside a single line (spaces,
-        # visible-rendered GS separators, tabs) so the emitted code is
-        # the clean concatenated KM string the printer expects.
-        s = "".join(line.split())
+        # _clean_code collapses whitespace, unescapes `_x001D_`, and strips
+        # any GS/control chars so the emitted code is the flush KM string.
+        s = _clean_code(line)
         if s:
             out.append(s)
     return out
