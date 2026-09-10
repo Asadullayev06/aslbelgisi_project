@@ -4,7 +4,7 @@ import type {
   StockRegisterResp, StockStatusResp, StockResultResp, StockVerifyResp,
   InspectorLookupResp,
   KmParseResp, SsccParseResp, ModListResp, CustomAggRunResp, CustomAggRunBody,
-  AnalysisResult,
+  AnalysisResult, AslCompany,
 } from "./types";
 
 // Called when any request comes back 401 so the shell can bounce to login.
@@ -292,6 +292,17 @@ export const api = {
                             business_place_id: body.business_place_id || "",
                             production_order_id: body.production_order_id || "",
                           }) }),
+
+  // Saved ASL company credentials (the INN + API key keeper)
+  aslCompanies: () => req<AslCompany[]>("/api/asl-companies"),
+  aslCompanyCreate: (body: { name: string; inn: string; api_key: string }) =>
+    req<AslCompany>("/api/asl-companies",
+      { method: "POST", body: JSON.stringify(body) }),
+  aslCompanyUpdate: (id: number, body: { name?: string; inn?: string; api_key?: string }) =>
+    req<AslCompany>(`/api/asl-companies/${id}`,
+      { method: "PATCH", body: JSON.stringify(body) }),
+  aslCompanyDelete: (id: number) =>
+    req<void>(`/api/asl-companies/${id}`, { method: "DELETE" }),
 
   // GTIN stock (Ostatok)
   stockVerify: (inn: string, api_key: string) =>

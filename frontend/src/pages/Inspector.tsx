@@ -9,6 +9,7 @@ import { Card, CardHead } from "@/components/ui/Card";
 import { Field, Input, Textarea } from "@/components/ui/Input";
 import { Badge } from "@/components/ui/Badge";
 import { Toaster, useFlashes } from "@/components/ui/Toast";
+import { CompanyPicker } from "@/components/CompanyPicker";
 import { api } from "@/api";
 import type { InspectorResult, InspectorLookupResp } from "@/types";
 import { cn } from "@/lib/utils";
@@ -139,6 +140,10 @@ export function Inspector({ onExit }: { onExit: () => void }) {
             />
             {!verified ? (
               <>
+                <div className="mb-3">
+                  <CompanyPicker tone="accent" currentInn={inn} currentKey={aslKey}
+                                 onPick={(pInn, pKey) => { setInn(pInn); setAslKey(pKey); }} />
+                </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <Field label="INN (STIR)">
                     <div className="relative">
@@ -158,7 +163,7 @@ export function Inspector({ onExit }: { onExit: () => void }) {
                   </Field>
                 </div>
                 <div className="text-xs text-muted mt-2">
-                  API kalit brauzeringizdan ASL ga to'g'ridan-to'g'ri yuboriladi va serverda hech qachon saqlanmaydi.
+                  Kompaniyani saqlab qo'ysangiz, keyingi safar ro'yxatdan tanlaysiz.
                 </div>
                 <Button variant="primary" className="w-full mt-3" onClick={verify} disabled={verifying}>
                   {verifying ? <><Loader2 className="size-4 animate-spin" /> Tekshirilmoqda…</>

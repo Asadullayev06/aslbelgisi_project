@@ -7,6 +7,7 @@ import { Card, CardHead } from "@/components/ui/Card";
 import { Field, Input, Textarea } from "@/components/ui/Input";
 import { Badge } from "@/components/ui/Badge";
 import { Toaster, useFlashes } from "@/components/ui/Toast";
+import { CompanyPicker } from "@/components/CompanyPicker";
 import { api } from "@/api";
 import type { ProjectSummary } from "@/types";
 
@@ -238,13 +239,17 @@ export function SetupInventory({ onCreated, onCancel, presetName, presetProduct,
                       placeholder="Har bir qatorga bitta KM kod." />
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-            <Field label="INN">
-              <Input value={aslInn} onChange={e => setAslInn(e.target.value)} placeholder="masalan: 307173509" />
-            </Field>
-            <Field label="ASL API kalit">
-              <Input value={aslKey} onChange={e => setAslKey(e.target.value)} placeholder="Business User API key" />
-            </Field>
+          <div className="mt-4 flex flex-col gap-3">
+            <CompanyPicker tone="warning" currentInn={aslInn} currentKey={aslKey}
+                           onPick={(pInn, pKey) => { setAslInn(pInn); setAslKey(pKey); }} />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Field label="INN">
+                <Input value={aslInn} onChange={e => setAslInn(e.target.value)} placeholder="masalan: 307173509" />
+              </Field>
+              <Field label="ASL API kalit">
+                <Input value={aslKey} onChange={e => setAslKey(e.target.value)} placeholder="Business User API key" />
+              </Field>
+            </div>
           </div>
         )}
       </Card>

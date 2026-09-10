@@ -62,6 +62,15 @@ export interface ProjectSummary {
   created_at: string;
 }
 
+/** Saved ASL credentials for a company (the INN + API key keeper). */
+export interface AslCompany {
+  id: number;
+  name: string;
+  inn: string;
+  api_key: string;
+  updated_at: string;
+}
+
 export interface ClosedBox {
   id: number;
   sscc: string;

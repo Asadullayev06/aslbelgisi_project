@@ -245,6 +245,27 @@ class LoginEvent(Base):
     )
 
 
+class AslCompany(Base):
+    """Saved ASL credentials for one company — name + INN + Business User API
+    key. Lets operators pick a saved company in the auth step instead of
+    retyping. Stored server-side because scanning/queries reuse the key."""
+    __tablename__ = "asl_companies"
+    id:         Mapped[int]      = mapped_column(BigInteger, primary_key=True)
+    name:       Mapped[str]      = mapped_column(Text, nullable=False)
+    inn:        Mapped[str]      = mapped_column(Text, nullable=False, default="")
+    api_key:    Mapped[str]      = mapped_column(Text, nullable=False, default="")
+    created_by: Mapped[Optional[int]] = mapped_column(BigInteger,
+                                        ForeignKey("users.id", ondelete="SET NULL"),
+                                        nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),
+                                        server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),
+                                        server_default=func.now(), nullable=False)
+    __table_args__ = (
+        UniqueConstraint("name", name="uq_asl_companies_name"),
+    )
+
+
 class AslOwnershipCheck(Base):
     """Cache of ASL 9.3 owner-check verdicts, one row per (project, code).
 
