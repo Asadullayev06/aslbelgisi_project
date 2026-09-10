@@ -118,6 +118,12 @@ export const api = {
   }) => req<ScanState>("/api/projects/inventory",
                        { method: "POST", body: JSON.stringify(body) }),
 
+  /** Admin: append one more series (name + KM codes) to an existing
+   *  manifest inventory loyiha. Returns the refreshed scan state. */
+  addInventorySeries: (projectId: number, name: string, km_codes_text: string) =>
+    req<ScanState>(`/api/projects/${projectId}/inventory-series`,
+                   { method: "POST", body: JSON.stringify({ name, km_codes_text }) }),
+
   boxContents: (projectId: number, boxId: number) =>
     req<BoxContents>(`/api/projects/${projectId}/boxes/${boxId}/contents`),
 

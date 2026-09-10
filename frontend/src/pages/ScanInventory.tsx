@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowLeft, Undo2, PackageMinus, AlertTriangle, ChevronDown, ChevronRight,
-  X, Trash2, Sparkles, Download,
+  X, Trash2, Sparkles, Download, Plus, Upload,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHead } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
+import { Field, Input, Textarea } from "@/components/ui/Input";
 import { Toaster, useFlashes } from "@/components/ui/Toast";
 import { ScanInput, type ScanInputHandle } from "@/components/ScanInput";
 import { api } from "@/api";
@@ -46,6 +47,13 @@ export function ScanInventory({ projectId, onExit }: Props) {
   const [online, setOnline] = useState(() =>
     typeof navigator === "undefined" ? true : navigator.onLine);
   const [stalled, setStalled] = useState(false);
+
+  // Admin "add series" inline form.
+  const [addingSeries, setAddingSeries] = useState(false);
+  const [seriesName, setSeriesName]     = useState("");
+  const [seriesCodes, setSeriesCodes]   = useState("");
+  const [seriesBusy, setSeriesBusy]     = useState(false);
+  const seriesFileRef = useRef<HTMLInputElement>(null);
 
   // Loud alert bar for rejects/extras — the OPERATOR-facing surface.
   type Alert = { code: string; reason: string;
@@ -265,6 +273,29 @@ export function ScanInventory({ projectId, onExit }: Props) {
     catch (e: any) { push("err", String(e.message || e)); }
   }
 
+  // ── admin: add a new series to this inventory loyiha ──────
+  async function loadSeriesFile(file: File) {
+    try {
+      const res = await api.parseFile("km", file);
+      setSeriesCodes(prev => (prev ? prev + "\n" : "") + res.codes.join("\n"));
+      push("hit", `${res.count} KM fayldan qo'shildi`);
+    } catch (e: any) { push("err", String(e.message || e)); }
+  }
+  async function submitSeries() {
+    const name = seriesName.trim();
+    if (!name) { push("err", "Seriya nomi kiriting"); return; }
+    const codeCount = seriesCodes.split(/\r?\n/).filter(l => l.trim().length >= 20).length;
+    if (codeCount === 0) { push("err", "KM ro'yxati bo'sh"); return; }
+    setSeriesBusy(true);
+    try {
+      const r = await api.addInventorySeries(projectId, name, seriesCodes);
+      applyState(r);
+      push("hit", `Seriya qo'shildi: ${name}`);
+      setSeriesName(""); setSeriesCodes(""); setAddingSeries(false);
+    } catch (e: any) { push("err", String(e.message || e)); }
+    finally { setSeriesBusy(false); }
+  }
+
   async function toggleBox(box: ClosedBox) {
     const cur = expanded[box.id];
     if (cur && cur !== "err") {
@@ -409,6 +440,54 @@ export function ScanInventory({ projectId, onExit }: Props) {
             {invSeries.map(s => (
               <Badge key={s} tone="warning">{s}</Badge>
             ))}
+          </div>
+        )}
+
+        {/* Admin: append a new series to this loyiha (manifest mode only). */}
+        {admin && !p.asl_check_enabled && (
+          <div className="mt-3 border-t border-border pt-3">
+            {!addingSeries ? (
+              <Button variant="outline" size="sm" onClick={() => setAddingSeries(true)}>
+                <Plus className="size-4" /> Yangi seriya qo'shish
+              </Button>
+            ) : (
+              <div className="rounded-xl border border-warning/40 bg-warning/5 p-3">
+                <div className="grid grid-cols-1 md:grid-cols-[1fr_2fr] gap-3">
+                  <Field label="Seriya nomi">
+                    <Input value={seriesName} onChange={e => setSeriesName(e.target.value)}
+                           placeholder="masalan: L2026-05-B" />
+                  </Field>
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="text-sm">KM kodlar</div>
+                      <Button variant="outline" size="sm"
+                              onClick={() => seriesFileRef.current?.click()}>
+                        <Upload className="size-3" /> Fayl
+                      </Button>
+                      <input type="file" hidden ref={seriesFileRef}
+                             accept=".csv,.tsv,.txt,.xlsx,.xlsm,.xls"
+                             onChange={e => {
+                               const f = e.target.files?.[0];
+                               if (f) loadSeriesFile(f);
+                               e.currentTarget.value = "";
+                             }} />
+                    </div>
+                    <Textarea rows={4} value={seriesCodes}
+                              onChange={e => setSeriesCodes(e.target.value)}
+                              placeholder="Har bir qatorga bitta KM kod." />
+                  </div>
+                </div>
+                <div className="flex justify-end gap-2 mt-2">
+                  <Button variant="secondary" size="sm" disabled={seriesBusy}
+                          onClick={() => { setAddingSeries(false); setSeriesName(""); setSeriesCodes(""); }}>
+                    Bekor
+                  </Button>
+                  <Button variant="warning" size="sm" disabled={seriesBusy} onClick={submitSeries}>
+                    <Plus className="size-4" /> {seriesBusy ? "Qo'shilmoqda…" : "Qo'shish"}
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </Card>

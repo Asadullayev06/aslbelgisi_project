@@ -235,6 +235,58 @@ def create_inventory_project(
     return build_state(sess, project.id, u.id)
 
 
+# ── add a series to an existing inventory project (admin only) ──
+class InventorySeriesAdd(BaseModel):
+    name: str = Field(min_length=1)
+    km_codes_text: str = ""
+
+
+@router.post("/{project_id}/inventory-series", response_model=ScanState)
+def add_inventory_series(
+    project_id: int,
+    body: InventorySeriesAdd,
+    sess: Session = Depends(get_session),
+    u: User = Depends(require_admin),
+):
+    """Append one more series (name + KM codes) to an existing inventory
+    loyiha — the inventory counterpart of aggregation's 'Yangi seriya'.
+
+    Only for manifest inventory projects: an ASL-gate project has no manifest,
+    so there's nothing to add a series to. The new series name must be unique
+    within the project. Same (project, km, series) uniqueness as create.
+    """
+    p = sess.get(Project, project_id)
+    if p is None:
+        raise HTTPException(404, "loyiha topilmadi")
+    if getattr(p, "mode", "aggregation") != "inventory":
+        raise HTTPException(400, "faqat inventarizatsiya loyihalari uchun")
+    if getattr(p, "asl_check_enabled", False):
+        raise HTTPException(400, "ASL tekshiruvi rejimida seriya qo'shib bo'lmaydi")
+
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(400, "seriya nomi bo'sh bo'lishi mumkin emas")
+    clash = sess.execute(
+        select(KmPool.id).where(KmPool.project_id == project_id,
+                                KmPool.series == name).limit(1)
+    ).first()
+    if clash is not None:
+        raise HTTPException(409, f"seriya allaqachon mavjud: {name}")
+
+    codes, _warns = parse_pool_text(body.km_codes_text)
+    if not codes:
+        raise HTTPException(400, f"seriya '{name}' uchun KM ro'yxati bo'sh")
+
+    sess.execute(
+        pg_insert(KmPool)
+        .values([{"project_id": project_id, "km_code": c, "series": name}
+                 for c in codes])
+        .on_conflict_do_nothing(index_elements=["project_id", "km_code", "series"])
+    )
+    sess.flush()
+    return build_state(sess, project_id, u.id)
+
+
 # ── rename / delete (admin only) ────────────────────────────
 class ProjectPatch(BaseModel):
     name:                str | None = None
