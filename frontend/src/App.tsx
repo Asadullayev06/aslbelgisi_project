@@ -27,7 +27,7 @@ type Route =
   | { kind: "setup"; presetName?: string; presetProduct?: string; pickFromExisting?: boolean }
   | { kind: "scan"; projectId: number }
   | { kind: "invPicker" }                    // NEW: inventory projects
-  | { kind: "invSetup" }                     // NEW
+  | { kind: "invSetup"; presetName?: string; presetProduct?: string; pickFromExisting?: boolean }
   | { kind: "invScan"; projectId: number }   // NEW
   | { kind: "stock" }
   | { kind: "inspector" }
@@ -130,11 +130,18 @@ function Shell({ route, setRoute }: {
   if (route.kind === "invPicker") {
     return <InvPicker onOpen={id => setRoute({ kind: "invScan", projectId: id })}
                       onNew={() => setRoute({ kind: "invSetup" })}
+                      onNewSeriesPick={() => setRoute({ kind: "invSetup", pickFromExisting: true })}
+                      onNewSeries={(name, productName) =>
+                        setRoute({ kind: "invSetup",
+                                   presetName: name, presetProduct: productName })}
                       onHome={() => setRoute({ kind: "modeChooser" })} />;
   }
   if (route.kind === "invSetup") {
     return <SetupInventory onCreated={id => setRoute({ kind: "invScan", projectId: id })}
-                           onCancel={() => setRoute({ kind: "invPicker" })} />;
+                           onCancel={() => setRoute({ kind: "invPicker" })}
+                           presetName={route.presetName}
+                           presetProduct={route.presetProduct}
+                           pickFromExisting={route.pickFromExisting} />;
   }
   if (route.kind === "invScan") {
     return <ScanInventory projectId={route.projectId}
@@ -199,18 +206,27 @@ function ModeChooser({ onAggregation, onInventory, onHome }: {
 }
 
 
-/** Same visual as the aggregation Picker but reads mode='inventory'. */
-function InvPicker({ onOpen, onNew, onHome }: {
-  onOpen: (id: number) => void; onNew: () => void; onHome: () => void;
+/** Inventory picker — same product-grouped structure as aggregation:
+ *  product → series list → pick a series to scan into it. Each series is its
+ *  own project and carries its own mode (ASL or manual). */
+function InvPicker({ onOpen, onNew, onNewSeriesPick, onNewSeries, onHome }: {
+  onOpen: (id: number) => void;
+  onNew: () => void;
+  onNewSeriesPick: () => void;
+  onNewSeries: (name: string, productName: string) => void;
+  onHome: () => void;
 }) {
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [openKey, setOpenKey] = useState<string | null>(null);
   const load = () => {
     setErr(null);
     api.listProjects({ mode: "inventory" })
       .then(setProjects).catch(e => setErr(String(e)));
   };
   useEffect(load, []);
+
+  const groups = projects ? groupByProduct(projects) : [];
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-10">
@@ -225,15 +241,18 @@ function InvPicker({ onOpen, onNew, onHome }: {
             Inventarizatsiya loyihalari
           </div>
           <div className="text-muted text-sm mt-1">
-            Ombordagi mahsulotlarni sanash uchun
+            Mahsulotni tanlang → seriyani tanlang → skanerlashni boshlang
           </div>
         </div>
-        <NewInvProjectButton onClick={onNew} />
+        <div className="flex items-center gap-2">
+          <NewInvSeriesTopButton onClick={onNewSeriesPick} disabled={(projects?.length ?? 0) === 0} />
+          <NewInvProjectButton onClick={onNew} />
+        </div>
       </div>
 
       <Card>
-        <CardHead title="Faol inventarizatsiya loyihalari"
-                  right={<Badge tone="warning">{projects?.length ?? 0}</Badge>} />
+        <CardHead title="Mahsulotlar"
+                  right={<Badge tone="neutral">{groups.length}</Badge>} />
         {err && (
           <div className="rounded-lg border border-danger/40 bg-danger/10 p-3 text-sm text-danger">
             {err}
@@ -246,13 +265,99 @@ function InvPicker({ onOpen, onNew, onHome }: {
           </div>
         )}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {projects?.map(p => (
-            <ProjectRow key={p.id} p={p} tone="warning"
-                        icon={<ClipboardList className="size-4 text-warning" />}
-                        onOpen={onOpen} onChanged={load} />
-          ))}
+          {groups.map(g => {
+            const key = `${g.name}::${g.productName}`;
+            const isOpen = openKey === key;
+            return (
+              <InvProductGroupRow key={key}
+                                  group={g}
+                                  isOpen={isOpen}
+                                  onToggle={() => setOpenKey(isOpen ? null : key)}
+                                  onOpen={onOpen}
+                                  onAddSeries={() => onNewSeries(g.name, g.productName)}
+                                  onChanged={load} />
+            );
+          })}
         </div>
       </Card>
+    </div>
+  );
+}
+
+/** One inventory product's card: click expands to its series, each opening
+ *  the scan page. Series show their mode (ASL / manual) instead of capacity. */
+function InvProductGroupRow({ group, isOpen, onToggle, onOpen, onAddSeries, onChanged }: {
+  group: { name: string; productName: string; projects: ProjectSummary[] };
+  isOpen: boolean;
+  onToggle: () => void;
+  onOpen: (id: number) => void;
+  onAddSeries: () => void;
+  onChanged: () => void;
+}) {
+  const { user } = useAuth();
+  const admin = isAdmin(user);
+  return (
+    <div className="rounded-xl border border-border bg-surface2/40 overflow-hidden hover:border-warning/40 transition-colors">
+      <button onClick={onToggle}
+              className="w-full text-left p-4 hover:bg-surface2/70 transition-colors">
+        <div className="flex items-center justify-between gap-2 mb-1">
+          <div className="flex items-center gap-2 min-w-0">
+            <ClipboardList className="size-4 text-warning shrink-0" />
+            <span className="font-semibold truncate">{group.name}</span>
+          </div>
+          <Badge tone="warning">{group.projects.length} seriya</Badge>
+        </div>
+        <div className="text-sm text-muted truncate">{group.productName}</div>
+        <div className="text-xs text-muted/80 mt-1">
+          {isOpen ? "Yopish" : "Seriyalarni ochish"}
+        </div>
+      </button>
+
+      {isOpen && (
+        <div className="border-t border-border bg-surface/40 p-3 flex flex-col gap-2">
+          {group.projects.map(p => (
+            <InvSeriesRow key={p.id} p={p} onOpen={onOpen} onChanged={onChanged} />
+          ))}
+          {admin && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onAddSeries(); }}
+              className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-warning/40
+                         text-warning px-3 py-2 text-sm font-semibold hover:bg-warning/10 transition-colors"
+            >
+              <Plus className="size-4" /> Yangi seriya qo'shish
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** One inventory series row — shows its mode (ASL egalik / qo'lda) + admin
+ *  rename/delete, opens the scan page on click. */
+function InvSeriesRow({ p, onOpen, onChanged }: {
+  p: ProjectSummary; onOpen: (id: number) => void; onChanged: () => void;
+}) {
+  const { user } = useAuth();
+  const admin = isAdmin(user);
+  return (
+    <div className="group relative rounded-lg border border-border bg-surface2/40 hover:bg-surface2/70 hover:border-warning/40 transition-colors">
+      <button onClick={() => onOpen(p.id)} className="w-full text-left px-3 py-2">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0 text-sm">
+            <span className="font-mono text-muted shrink-0">seriya:</span>
+            <span className="font-semibold truncate">{p.series || "—"}</span>
+          </div>
+          <Badge tone={p.asl_check_enabled ? "accent" : "warning"}>
+            {p.asl_check_enabled ? "ASL egalik" : "qo'lda ro'yxat"}
+          </Badge>
+        </div>
+      </button>
+      {admin && (
+        <div className="absolute top-1.5 right-1.5 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          <ProjectAdminActions p={p} onChanged={onChanged} />
+        </div>
+      )}
     </div>
   );
 }
@@ -263,6 +368,17 @@ function NewInvProjectButton({ onClick }: { onClick: () => void }) {
   return (
     <Button variant="warning" size="lg" onClick={onClick}>
       <Plus className="size-4" /> Yangi inventarizatsiya
+    </Button>
+  );
+}
+
+function NewInvSeriesTopButton({ onClick, disabled }: { onClick: () => void; disabled?: boolean }) {
+  const { user } = useAuth();
+  if (!isAdmin(user)) return null;
+  return (
+    <Button variant="outline" size="lg" onClick={onClick} disabled={disabled}
+            title={disabled ? "Avval inventarizatsiya yarating" : "Mavjud mahsulotga yangi seriya qo'shish"}>
+      <Plus className="size-4" /> Yangi seriya qo'shish
     </Button>
   );
 }
@@ -366,118 +482,6 @@ function ToolCard({ icon, title, subtitle, onClick }: {
 }
 
 
-/** One project row with admin-only rename/delete controls. Reused by both
- *  the aggregation Picker and the inventory Picker. */
-function ProjectRow({ p, tone, icon, onOpen, onChanged }: {
-  p: ProjectSummary;
-  tone: "accent" | "warning";
-  icon: React.ReactNode;
-  onOpen: (id: number) => void;
-  onChanged: () => void;   // parent reloads after edit/delete
-}) {
-  const { user } = useAuth();
-  const admin = isAdmin(user);
-  const [editing, setEditing] = useState(false);
-  const [name, setName] = useState(p.name);
-  const [productName, setProductName] = useState(p.product_name);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  async function save() {
-    setErr(null); setBusy(true);
-    try {
-      await api.updateProject(p.id, { name, product_name: productName });
-      setEditing(false);
-      onChanged();
-    } catch (e: any) { setErr(String(e.message || e)); }
-    setBusy(false);
-  }
-
-  async function doDelete(e: React.MouseEvent) {
-    e.stopPropagation();
-    const status = p.status;
-    const warn = status === "submitted"
-      ? `"${p.name}" ASL ga yuborilgan loyiha. Uni butunlay o'chiramizmi? Bu amal ortga qaytmaydi.`
-      : `"${p.name}" loyihasini butunlay o'chiramizmi? Bu amal ortga qaytmaydi.`;
-    if (!confirm(warn)) return;
-    setBusy(true);
-    try {
-      await api.deleteProject(p.id);
-      onChanged();
-    } catch (e: any) { setErr(String(e.message || e)); alert(err || String(e.message || e)); }
-    setBusy(false);
-  }
-
-  if (editing) {
-    return (
-      <div className={"rounded-xl border p-4 " + (tone === "warning" ? "border-warning/50 bg-warning/5" : "border-accent/50 bg-accent/5")}>
-        <div className="flex flex-col gap-2">
-          <Input value={name} onChange={e => setName(e.target.value)}
-                 placeholder="Loyiha nomi" />
-          <Input value={productName} onChange={e => setProductName(e.target.value)}
-                 placeholder="Mahsulot nomi" />
-          {err && <div className="text-xs text-danger">{err}</div>}
-          <div className="flex gap-2 justify-end">
-            <Button variant="outline" size="sm" onClick={() => { setEditing(false); setName(p.name); setProductName(p.product_name); }}>
-              <X className="size-3" /> Bekor
-            </Button>
-            <Button variant="primary" size="sm" onClick={save} disabled={busy || !name.trim() || !productName.trim()}>
-              <Check className="size-3" /> {busy ? "…" : "Saqlash"}
-            </Button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className={
-      "group relative rounded-xl border border-border bg-surface2/40 p-4 " +
-      "hover:bg-surface2/70 transition-all " +
-      (tone === "warning" ? "hover:border-warning/50" : "hover:border-accent/50")
-    }>
-      <button onClick={() => onOpen(p.id)} className="w-full text-left">
-        <div className="flex items-center justify-between gap-2 mb-1">
-          <div className="flex items-center gap-2 min-w-0">
-            {icon}
-            <span className="font-semibold truncate">{p.name}</span>
-          </div>
-          {p.mode === "inventory" ? (
-            <Badge tone="warning">inventarizatsiya</Badge>
-          ) : (
-            <Badge tone={p.status === "submitted" ? "success"
-                        : p.status === "submitting" ? "warning" : "accent"}>
-              {p.status}
-            </Badge>
-          )}
-        </div>
-        <div className="text-sm text-muted">{p.product_name}</div>
-        {p.mode !== "inventory" && (
-          <div className="text-xs text-muted mt-2 flex gap-4">
-            <span>Qutilar: <b className="text-text">{p.total_boxes}</b></span>
-            <span>Har birida: <b className="text-text">{p.per_box}</b></span>
-            {p.has_loose && <span>Loose: <b className="text-text">{p.loose_qty}</b></span>}
-          </div>
-        )}
-      </button>
-
-      {admin && (
-        <div className="absolute top-2 right-2 flex gap-1 opacity-60 group-hover:opacity-100 transition-opacity">
-          <button onClick={e => { e.stopPropagation(); setEditing(true); }}
-                  title="Tahrirlash"
-                  className="p-1.5 rounded-md bg-surface/80 border border-border hover:border-accent/60 hover:text-accent">
-            <Pencil className="size-3.5" />
-          </button>
-          <button onClick={doDelete} disabled={busy}
-                  title="O'chirish"
-                  className="p-1.5 rounded-md bg-surface/80 border border-border hover:border-danger/60 hover:text-danger">
-            <Trash2 className="size-3.5" />
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
 
 
 /** One product's card in the picker: header shows the product + series

@@ -28,26 +28,22 @@ class ProjectCreate(BaseModel):
     box_codes_text: str = ""     # newline-separated (raw)
 
 
-class InventorySeriesCodes(BaseModel):
-    """One series with its uploaded KM codes (raw text, newline-separated)."""
-    name: str = Field(min_length=1)
-    km_codes_text: str = ""
-
-
 class InventoryProjectCreate(BaseModel):
-    """Warehouse-inventory project. No SSCC pool, no capacity, no MOD/API key —
-    those are the aggregation workflow only.
+    """One inventory SERIES = one project, grouped by (name, product) — the
+    same structure as aggregation. Each series independently chooses its mode:
 
-    Two ways to gate scans:
-      * upload a manifest (series + KM codes), OR
-      * enable the ASL ownership check (asl_check_*), where every scanned
-        code is validated against ASL 9.3 owner-check for that INN and no
-        manifest is needed.
-    At least one series is required UNLESS asl_check_enabled is true.
+      * manual  — upload a KM manifest (km_codes_text); scans match it, and
+        anything not in it is flagged ekstra.
+      * ASL     — no manifest; every scan is validated against ASL 9.3
+        owner-check for that INN (asl_check_*).
+
+    Adding another series to an existing product = creating another project
+    with the same name + product_name (its mode chosen fresh).
     """
     name: str = Field(min_length=1)
     product_name: str = Field(min_length=1)
-    series: list[InventorySeriesCodes] = Field(default_factory=list)
+    series_name: str = Field(min_length=1)
+    km_codes_text: str = ""            # manual manifest (ignored in ASL mode)
     asl_check_enabled: bool = False
     asl_check_inn: str = ""
     asl_check_api_key: str = ""
@@ -65,6 +61,7 @@ class ProjectSummary(BaseModel):
     status: str
     mode: str = "aggregation"
     series: str = ""
+    asl_check_enabled: bool = False   # inventory: this series is ASL-validated
     created_at: datetime
 
 

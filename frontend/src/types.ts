@@ -58,6 +58,7 @@ export interface ProjectSummary {
   status: string;
   mode?: ProjectMode;
   series?: string;
+  asl_check_enabled?: boolean;   // inventory: this series is ASL-validated
   created_at: string;
 }
 

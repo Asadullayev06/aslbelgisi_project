@@ -107,22 +107,17 @@ export const api = {
     business_place_id?: string; production_order_id?: string;
   }) => req<ScanState>("/api/projects", { method: "POST", body: JSON.stringify(body) }),
 
+  /** Create ONE inventory series (= one project), grouped by (name, product)
+   *  like aggregation. Each series picks its own mode: manual manifest
+   *  (km_codes_text) or ASL ownership check (asl_check_*). */
   createInventoryProject: (body: {
-    name: string; product_name: string;
-    series: { name: string; km_codes_text: string }[];
-    /** ASL ownership-gate mode: validate every scan against ASL 9.3 for this
-     *  INN. When enabled, `series` may be empty (no manifest). */
+    name: string; product_name: string; series_name: string;
+    km_codes_text?: string;
     asl_check_enabled?: boolean;
     asl_check_inn?: string;
     asl_check_api_key?: string;
   }) => req<ScanState>("/api/projects/inventory",
                        { method: "POST", body: JSON.stringify(body) }),
-
-  /** Admin: append one more series (name + KM codes) to an existing
-   *  manifest inventory loyiha. Returns the refreshed scan state. */
-  addInventorySeries: (projectId: number, name: string, km_codes_text: string) =>
-    req<ScanState>(`/api/projects/${projectId}/inventory-series`,
-                   { method: "POST", body: JSON.stringify({ name, km_codes_text }) }),
 
   boxContents: (projectId: number, boxId: number) =>
     req<BoxContents>(`/api/projects/${projectId}/boxes/${boxId}/contents`),

@@ -160,19 +160,24 @@ def create_inventory_project(
     sess: Session = Depends(get_session),
     u: User = Depends(require_admin),
 ):
-    """Warehouse-count project. Multiple series, KM codes per series, no SSCC
-    pool, no capacity. Never sent to ASL Belgisi.
+    """Create ONE inventory series (= one project), grouped by (name, product)
+    exactly like aggregation. No SSCC pool, no capacity; never sent to ASL.
 
-    Duplicate handling (decision c): the SAME km_code can appear in multiple
-    series — one km_pool row per (series, code). When a code that lives in
-    both Series A and B is scanned, both rows get marked matched, and the
-    box view reports both series.
+    Each series independently picks its mode:
+      * ASL   — asl_check_enabled + INN/key; scans validated against ASL.
+      * manual — km_codes_text manifest; scans matched against it.
+
+    A second series for the same product is just another call with the same
+    name + product_name and its own mode.
     """
-    # ASL ownership-gate mode: no manifest needed — every scan is validated
-    # against ASL. Requires INN + API key.
     asl_enabled = bool(body.asl_check_enabled)
     asl_inn = (body.asl_check_inn or "").strip()
     asl_key = (body.asl_check_api_key or "").strip()
+    series_name = body.series_name.strip()
+    if not series_name:
+        raise HTTPException(400, "seriya nomi bo'sh bo'lishi mumkin emas")
+
+    codes: list[str] = []
     if asl_enabled:
         if not asl_inn or not asl_key:
             raise HTTPException(400, "ASL tekshiruvi uchun INN va API kalit kerak")
@@ -183,33 +188,28 @@ def create_inventory_project(
         data = v.get("data") or {}
         if isinstance(data, dict) and data.get("isTinCorrect") is False:
             raise HTTPException(400, "API kalit ushbu INN ga tegishli emas")
-
-    # Validate every series and its codes up front, so a partial project
-    # can't survive a mid-loop failure. In ASL-gate mode a manifest is
-    # optional (and usually absent).
-    if not body.series and not asl_enabled:
-        raise HTTPException(400, "kamida bitta seriya kerak")
-
-    series_seen: set[str] = set()
-    normalized: list[tuple[str, list[str], list[str]]] = []
-    for s in body.series:
-        name = s.name.strip()
-        if not name:
-            raise HTTPException(400, "seriya nomi bo'sh bo'lishi mumkin emas")
-        if name in series_seen:
-            raise HTTPException(400, f"seriya nomi takrorlanadi: {name}")
-        series_seen.add(name)
-        codes, warns = parse_pool_text(s.km_codes_text)
+    else:
+        codes, _warns = parse_pool_text(body.km_codes_text)
         if not codes:
-            raise HTTPException(400, f"seriya '{name}' uchun KM ro'yxati bo'sh")
-        normalized.append((name, codes, warns))
+            raise HTTPException(400, f"seriya '{series_name}' uchun KM ro'yxati bo'sh")
+
+    # Guard against a duplicate series within the same product group.
+    clash = sess.execute(
+        select(Project.id).where(
+            Project.mode == "inventory",
+            Project.name == body.name.strip(),
+            Project.product_name == body.product_name.strip(),
+            Project.series == series_name,
+        ).limit(1)
+    ).first()
+    if clash is not None:
+        raise HTTPException(409, f"bu mahsulotda '{series_name}' seriyasi allaqachon mavjud")
 
     project = Project(
         name=body.name.strip(),
         product_name=body.product_name.strip(),
-        # Inventory has no plan — the operator scans until they stop.
         total_boxes=0, per_box=0, has_loose=False, loose_qty=0,
-        series="",                    # per-code series lives on km_pool rows
+        series=series_name,           # one series per project (aggregation-style)
         business_place_id="", production_order_id="",
         status="active",
         mode="inventory",
@@ -221,70 +221,15 @@ def create_inventory_project(
     sess.add(project)
     sess.flush()
 
-    # Upload every series's codes. Same (project, km, series) is unique;
-    # ON CONFLICT DO NOTHING catches accidental within-file dupes so the
-    # rest still loads.
-    for name, codes, _warns in normalized:
+    if codes:
         sess.execute(
             pg_insert(KmPool)
-            .values([{"project_id": project.id, "km_code": c, "series": name}
+            .values([{"project_id": project.id, "km_code": c, "series": series_name}
                      for c in codes])
             .on_conflict_do_nothing(index_elements=["project_id", "km_code", "series"])
         )
     sess.flush()
     return build_state(sess, project.id, u.id)
-
-
-# ── add a series to an existing inventory project (admin only) ──
-class InventorySeriesAdd(BaseModel):
-    name: str = Field(min_length=1)
-    km_codes_text: str = ""
-
-
-@router.post("/{project_id}/inventory-series", response_model=ScanState)
-def add_inventory_series(
-    project_id: int,
-    body: InventorySeriesAdd,
-    sess: Session = Depends(get_session),
-    u: User = Depends(require_admin),
-):
-    """Append one more series (name + KM codes) to an existing inventory
-    loyiha — the inventory counterpart of aggregation's 'Yangi seriya'.
-
-    Only for manifest inventory projects: an ASL-gate project has no manifest,
-    so there's nothing to add a series to. The new series name must be unique
-    within the project. Same (project, km, series) uniqueness as create.
-    """
-    p = sess.get(Project, project_id)
-    if p is None:
-        raise HTTPException(404, "loyiha topilmadi")
-    if getattr(p, "mode", "aggregation") != "inventory":
-        raise HTTPException(400, "faqat inventarizatsiya loyihalari uchun")
-    if getattr(p, "asl_check_enabled", False):
-        raise HTTPException(400, "ASL tekshiruvi rejimida seriya qo'shib bo'lmaydi")
-
-    name = body.name.strip()
-    if not name:
-        raise HTTPException(400, "seriya nomi bo'sh bo'lishi mumkin emas")
-    clash = sess.execute(
-        select(KmPool.id).where(KmPool.project_id == project_id,
-                                KmPool.series == name).limit(1)
-    ).first()
-    if clash is not None:
-        raise HTTPException(409, f"seriya allaqachon mavjud: {name}")
-
-    codes, _warns = parse_pool_text(body.km_codes_text)
-    if not codes:
-        raise HTTPException(400, f"seriya '{name}' uchun KM ro'yxati bo'sh")
-
-    sess.execute(
-        pg_insert(KmPool)
-        .values([{"project_id": project_id, "km_code": c, "series": name}
-                 for c in codes])
-        .on_conflict_do_nothing(index_elements=["project_id", "km_code", "series"])
-    )
-    sess.flush()
-    return build_state(sess, project_id, u.id)
 
 
 # ── rename / delete (admin only) ────────────────────────────
