@@ -20,7 +20,8 @@ from .api import auth as auth_api
 from .api import (
     asl_companies as asl_companies_api,
     bartender as bartender_api,
-    custom_agg, gtin_stock, inspector, projects, scanning,
+    custom_agg, gtin_stock, inspector, projects,
+    reporting as reporting_api, scanning,
     search as search_api, sscc as sscc_api, submissions, users as users_api,
 )
 
@@ -47,6 +48,7 @@ app.include_router(users_api.router)
 app.include_router(sscc_api.router)
 app.include_router(bartender_api.router)
 app.include_router(asl_companies_api.router)
+app.include_router(reporting_api.router)
 
 
 @app.get("/health")

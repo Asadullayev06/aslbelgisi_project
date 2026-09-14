@@ -24,7 +24,7 @@ from .db import Base
 KM_STATUSES     = ("pending", "claimed", "aggregated")
 BOX_STATUSES    = ("pending", "used")
 PROJECT_STATUS  = ("active", "submitting", "submitted", "archived")
-PROJECT_MODES   = ("aggregation", "inventory")
+PROJECT_MODES   = ("aggregation", "inventory", "reporting")
 USER_ROLES      = ("admin", "operator")
 
 
@@ -242,6 +242,30 @@ class LoginEvent(Base):
     __table_args__ = (
         Index("ix_login_events_created", "created_at"),
         Index("ix_login_events_user", "user_id"),
+    )
+
+
+class ReportScan(Base):
+    """One scanned code in a reporting series. Flat list, dedup by
+    (project, code) — the only rule of the reporting module. `code` is the
+    canonical form: 31-char sSGTIN for KMs, 20-char '00' + 18 digits for SSCC."""
+    __tablename__ = "report_scans"
+    id:         Mapped[int]      = mapped_column(BigInteger, primary_key=True)
+    project_id: Mapped[int]      = mapped_column(BigInteger,
+                                        ForeignKey("projects.id", ondelete="CASCADE"),
+                                        nullable=False)
+    code:       Mapped[str]      = mapped_column(Text, nullable=False)
+    kind:       Mapped[str]      = mapped_column(Text, nullable=False)   # 'km'|'sscc'
+    raw:        Mapped[str]      = mapped_column(Text, nullable=False, default="")
+    scanned_by: Mapped[Optional[int]] = mapped_column(BigInteger,
+                                        ForeignKey("users.id", ondelete="SET NULL"),
+                                        nullable=True)
+    scanned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),
+                                        server_default=func.now(), nullable=False)
+    __table_args__ = (
+        UniqueConstraint("project_id", "code", name="uq_report_scans_project_code"),
+        CheckConstraint("kind IN ('km','sscc')", name="ck_report_scans_kind"),
+        Index("ix_report_scans_project_time", "project_id", "scanned_at"),
     )
 
 

@@ -2,7 +2,28 @@
 
 export type FlashLevel = "hit" | "err" | "warn";
 
-export type ProjectMode = "aggregation" | "inventory";
+export type ProjectMode = "aggregation" | "inventory" | "reporting";
+
+/** ── Reporting module — one flat list of scanned codes per series. ── */
+export interface ReportScanRow {
+  id: number;
+  code: string;
+  kind: "km" | "sscc";
+  scanned_at: string;
+}
+export interface ReportState {
+  project_id: number;
+  total: number;
+  km_count: number;
+  sscc_count: number;
+  scans: ReportScanRow[];
+}
+export interface ReportScanBatchResult {
+  results: { code: string; kind: string; accepted: boolean; reason: string }[];
+  accepted: number;
+  rejected: number;
+  state: ReportState;
+}
 
 export interface AdminUser {
   id: number;

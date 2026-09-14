@@ -5,6 +5,7 @@ import type {
   InspectorLookupResp,
   KmParseResp, SsccParseResp, ModListResp, CustomAggRunResp, CustomAggRunBody,
   AnalysisResult, AslCompany,
+  ReportState, ReportScanBatchResult,
 } from "./types";
 
 // Called when any request comes back 401 so the shell can bounce to login.
@@ -89,7 +90,7 @@ export const api = {
   logout: () => req<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
 
   // projects
-  listProjects: (opts: { status?: string; mode?: "aggregation" | "inventory" } = {}) => {
+  listProjects: (opts: { status?: string; mode?: "aggregation" | "inventory" | "reporting" } = {}) => {
     const p = new URLSearchParams();
     if (opts.status) p.set("status", opts.status);
     if (opts.mode)   p.set("mode",   opts.mode);
@@ -129,6 +130,38 @@ export const api = {
                           { credentials: "include" });
     if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
     return r.blob();
+  },
+
+  // ── Reporting module ────────────────────────────────────
+  /** Admin only. */
+  reportingCreate: (body: { name: string; product_name: string; series_name: string }) =>
+    req<{ id: number; name: string; product_name: string; series: string }>(
+      "/api/reporting/projects",
+      { method: "POST", body: JSON.stringify(body) }),
+  reportingGet: (projectId: number) =>
+    req<ReportState>(`/api/reporting/projects/${projectId}`),
+  reportingScan: (projectId: number, codes: string[]) =>
+    req<ReportScanBatchResult>(`/api/reporting/projects/${projectId}/scan`,
+      { method: "POST", body: JSON.stringify({ codes }) }),
+  reportingDeleteScan: (projectId: number, scanId: number) =>
+    req<ReportState>(`/api/reporting/projects/${projectId}/scans/${scanId}`,
+      { method: "DELETE" }),
+  /** Excel export — filename comes from Content-Disposition; caller reads
+   *  it via getResponseFilename below and saves the Blob under that name. */
+  reportingExport: async (projectId: number): Promise<{ blob: Blob; filename: string }> => {
+    const r = await fetch(`/api/reporting/projects/${projectId}/export`,
+                          { credentials: "include" });
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    const cd = r.headers.get("Content-Disposition") || "";
+    // RFC 5987 filename*=UTF-8''... beats the plain filename=".."
+    let filename = "report.xlsx";
+    const star = /filename\*=UTF-8''([^;]+)/i.exec(cd);
+    if (star) filename = decodeURIComponent(star[1]);
+    else {
+      const plain = /filename="?([^";]+)"?/i.exec(cd);
+      if (plain) filename = plain[1];
+    }
+    return { blob: await r.blob(), filename };
   },
 
   // SSCC / internal box label generator
