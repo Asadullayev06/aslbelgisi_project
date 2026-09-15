@@ -25,6 +25,51 @@ export interface ReportScanBatchResult {
   state: ReportState;
 }
 
+/** ── Box-check module — audit a physical box against ASL's records. ── */
+export type BoxCheckStatus = "active" | "closed_ok" | "closed_mismatch" | "abandoned";
+
+export interface BoxCheckSummary {
+  id: number;
+  company_name: string;
+  owner_inn: string;
+  sscc: string;
+  expected_count: number;
+  product_name: string;
+  gtin: string;
+  package_type: string;
+  status: BoxCheckStatus;
+  opened_at: string;
+  closed_at?: string | null;
+}
+
+export interface BoxCheckScanRow {
+  id: number;
+  code: string;
+  verdict: "match" | "duplicate" | "extra" | "unknown";
+  scanned_at: string;
+}
+
+export interface BoxCheckState {
+  box: BoxCheckSummary;
+  expected_kms: string[];
+  matched: string[];
+  extras: string[];
+  missing: string[];
+  matched_count: number;
+  extra_count: number;
+  missing_count: number;
+  scans: BoxCheckScanRow[];
+}
+
+export interface BoxCheckScanBatchOut {
+  results: { code: string; verdict: string; reason: string }[];
+  matched: number;
+  extras: number;
+  duplicates: number;
+  unknowns: number;
+  state: BoxCheckState;
+}
+
 export interface AdminUser {
   id: number;
   username: string;

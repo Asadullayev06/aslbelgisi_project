@@ -18,6 +18,7 @@ import { SsccGenerator } from "@/pages/SsccGenerator";
 import { BarTenderCsv } from "@/pages/BarTenderCsv";
 import { SetupReporting } from "@/pages/SetupReporting";
 import { ScanReporting } from "@/pages/ScanReporting";
+import { BoxCheck } from "@/pages/BoxCheck";
 import { api, setUnauthorizedHandler } from "@/api";
 import { AuthContext, isAdmin, useAuth, type User } from "@/auth";
 import type { ProjectSummary } from "@/types";
@@ -40,6 +41,7 @@ type Route =
   | { kind: "search" }
   | { kind: "sscc" }
   | { kind: "bartender" }
+  | { kind: "boxCheck" }
   | { kind: "admin" };
 
 export default function App() {
@@ -182,6 +184,9 @@ function Shell({ route, setRoute }: {
   if (route.kind === "bartender") {
     return <BarTenderCsv onExit={() => setRoute({ kind: "home" })} />;
   }
+  if (route.kind === "boxCheck") {
+    return <BoxCheck onExit={() => setRoute({ kind: "home" })} />;
+  }
   return <Home onAggregation={() => setRoute({ kind: "modeChooser" })}
                onStock={() => setRoute({ kind: "stock" })}
                onInspector={() => setRoute({ kind: "inspector" })}
@@ -189,6 +194,7 @@ function Shell({ route, setRoute }: {
                onSearch={() => setRoute({ kind: "search" })}
                onSscc={() => setRoute({ kind: "sscc" })}
                onBartender={() => setRoute({ kind: "bartender" })}
+               onBoxCheck={() => setRoute({ kind: "boxCheck" })}
                onAdmin={() => setRoute({ kind: "admin" })} />;
 }
 
@@ -587,7 +593,7 @@ function NewRepSeriesTopButton({ onClick, disabled }: { onClick: () => void; dis
 }
 
 
-function Home({ onAggregation, onStock, onInspector, onCustom, onSearch, onSscc, onBartender, onAdmin }: {
+function Home({ onAggregation, onStock, onInspector, onCustom, onSearch, onSscc, onBartender, onBoxCheck, onAdmin }: {
   onAggregation: () => void;
   onStock: () => void;
   onInspector: () => void;
@@ -595,6 +601,7 @@ function Home({ onAggregation, onStock, onInspector, onCustom, onSearch, onSscc,
   onSearch: () => void;
   onSscc: () => void;
   onBartender: () => void;
+  onBoxCheck: () => void;
   onAdmin: () => void;
 }) {
   const { user } = useAuth();
@@ -649,6 +656,12 @@ function Home({ onAggregation, onStock, onInspector, onCustom, onSearch, onSscc,
           title="BarTender CSV"
           subtitle="KM kodlarni printerga tayyor 5 ustunli CSV formatga aylantirish"
           onClick={onBartender}
+        />
+        <ToolCard
+          icon={<ClipboardList className="size-8 text-accent" />}
+          title="Quti tekshiruvi"
+          subtitle="SSCC bo'yicha ASL dan KM ro'yxatini olib, jismoniy quti tarkibi bilan solishtirish"
+          onClick={onBoxCheck}
         />
         {admin && (
           <ToolCard

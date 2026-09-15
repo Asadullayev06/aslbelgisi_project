@@ -16,6 +16,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -313,6 +314,69 @@ class AslOwnershipCheck(Base):
         CheckConstraint("verdict IN ('owned','forbidden','missing')",
                         name="ck_asl_checks_verdict"),
         Index("ix_asl_checks_project", "project_id"),
+    )
+
+
+class BoxCheck(Base):
+    """One "box audit" session — operator scanned an SSCC, ASL returned its
+    expected KM list, and the operator is now scanning KMs to verify the
+    physical contents. Rows survive reloads so an operator can walk away
+    mid-audit and pick it up. Status transitions: active → closed_ok
+    (matched == expected, no extras) / closed_mismatch (anything else) /
+    abandoned (admin discard).
+    """
+    __tablename__ = "box_checks"
+    id:             Mapped[int]      = mapped_column(BigInteger, primary_key=True)
+    created_by:     Mapped[Optional[int]] = mapped_column(BigInteger,
+                                        ForeignKey("users.id", ondelete="SET NULL"),
+                                        nullable=True)
+    company_name:   Mapped[str]      = mapped_column(Text, nullable=False, default="")
+    owner_inn:      Mapped[str]      = mapped_column(Text, nullable=False, default="")
+    api_key:        Mapped[str]      = mapped_column(Text, nullable=False, default="")
+    sscc:           Mapped[str]      = mapped_column(Text, nullable=False)
+    # JSONB list of canonical 31-char KM codes ASL says are in this box.
+    expected_json:  Mapped[list]     = mapped_column(JSONB, nullable=False, default=list)
+    expected_count: Mapped[int]      = mapped_column(Integer, nullable=False, default=0)
+    product_name:   Mapped[str]      = mapped_column(Text, nullable=False, default="")
+    gtin:           Mapped[str]      = mapped_column(Text, nullable=False, default="")
+    package_type:   Mapped[str]      = mapped_column(Text, nullable=False, default="")
+    status:         Mapped[str]      = mapped_column(Text, nullable=False, default="active")
+    opened_at:      Mapped[datetime] = mapped_column(DateTime(timezone=True),
+                                        server_default=func.now(), nullable=False)
+    closed_at:      Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True),
+                                        nullable=True)
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('active','closed_ok','closed_mismatch','abandoned')",
+            name="ck_box_checks_status",
+        ),
+        Index("ix_box_checks_created_by", "created_by", "opened_at"),
+    )
+
+
+class BoxCheckScan(Base):
+    """Append-only audit row for every KM the operator scans against a
+    box_check. The verdict is decided at scan time against the expected
+    set — match / duplicate / extra / unknown."""
+    __tablename__ = "box_check_scans"
+    id:           Mapped[int]      = mapped_column(BigInteger, primary_key=True)
+    box_check_id: Mapped[int]      = mapped_column(BigInteger,
+                                        ForeignKey("box_checks.id", ondelete="CASCADE"),
+                                        nullable=False)
+    code:         Mapped[str]      = mapped_column(Text, nullable=False)   # 31-char canonical
+    verdict:      Mapped[str]      = mapped_column(Text, nullable=False)
+    raw:          Mapped[str]      = mapped_column(Text, nullable=False, default="")
+    scanned_by:   Mapped[Optional[int]] = mapped_column(BigInteger,
+                                        ForeignKey("users.id", ondelete="SET NULL"),
+                                        nullable=True)
+    scanned_at:   Mapped[datetime] = mapped_column(DateTime(timezone=True),
+                                        server_default=func.now(), nullable=False)
+    __table_args__ = (
+        CheckConstraint(
+            "verdict IN ('match','duplicate','extra','unknown')",
+            name="ck_box_check_scans_verdict",
+        ),
+        Index("ix_box_check_scans_check", "box_check_id", "scanned_at"),
     )
 
 

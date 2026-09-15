@@ -6,6 +6,7 @@ import type {
   KmParseResp, SsccParseResp, ModListResp, CustomAggRunResp, CustomAggRunBody,
   AnalysisResult, AslCompany,
   ReportState, ReportScanBatchResult,
+  BoxCheckState, BoxCheckScanBatchOut, BoxCheckSummary,
 } from "./types";
 
 // Called when any request comes back 401 so the shell can bounce to login.
@@ -336,6 +337,24 @@ export const api = {
       { method: "PATCH", body: JSON.stringify(body) }),
   aslCompanyDelete: (id: number) =>
     req<void>(`/api/asl-companies/${id}`, { method: "DELETE" }),
+
+  // ── Box-check module — audit a physical box against ASL's records ──
+  boxCheckStart: (body: { inn: string; api_key: string; sscc: string; company_name?: string }) =>
+    req<BoxCheckState>("/api/box-check/scan-box",
+      { method: "POST", body: JSON.stringify(body) }, 60000),
+  boxCheckGet: (id: number) =>
+    req<BoxCheckState>(`/api/box-check/${id}`),
+  boxCheckScan: (id: number, codes: string[]) =>
+    req<BoxCheckScanBatchOut>(`/api/box-check/${id}/scan`,
+      { method: "POST", body: JSON.stringify({ codes }) }, 30000),
+  boxCheckClose: (id: number) =>
+    req<BoxCheckState>(`/api/box-check/${id}/close`, { method: "POST" }),
+  boxCheckReopen: (id: number) =>
+    req<BoxCheckState>(`/api/box-check/${id}/reopen`, { method: "POST" }),
+  boxCheckDelete: (id: number) =>
+    req<void>(`/api/box-check/${id}`, { method: "DELETE" }),
+  boxCheckList: (mineOnly = true, limit = 50) =>
+    req<BoxCheckSummary[]>(`/api/box-check?mine_only=${mineOnly}&limit=${limit}`),
 
   // GTIN stock (Ostatok)
   stockVerify: (inn: string, api_key: string) =>

@@ -336,6 +336,118 @@ def owner_check(api_key: str, inn: str, raw_codes: list[str]) -> dict:
             "missing": missing, "error": None}
 
 
+def fetch_box_children(api_key: str, inn: str, sscc: str) -> dict:
+    """9.3 owner-check on ONE SSCC — used by the Box-check module.
+
+    Returns a rich payload the router turns into JSON:
+      {
+        ok: bool,
+        verdict: 'owned' | 'forbidden' | 'missing' | 'error',
+        children: list[str],          # canonical 31-char KMs, dedup + input order
+        product_name: str,
+        gtin: str,
+        package_type: str,
+        error: str | None,
+        http_status: int,
+      }
+
+    ASL's owner-check reports SSCC ownership the same way it reports KM
+    ownership: `results[]` = owned by this INN, `forbiddenCodes[]` = owned by
+    another INN, `missingCodes[]` = not registered in ASL. Only 'owned' gets
+    a children[] list — everything else is a rejection the caller must show.
+    On any network / HTTP fault ok=False and verdict='error'; callers must
+    treat that as a technical failure (never accept, never cache).
+    """
+    sscc = (sscc or "").strip()
+    if not sscc:
+        return {"ok": False, "verdict": "error", "children": [],
+                "product_name": "", "gtin": "", "package_type": "",
+                "error": "SSCC bo'sh", "http_status": 0}
+
+    payload = {"codes": [sscc], "ownerTin": (inn or "").strip()}
+    try:
+        resp = requests.post(
+            f"{_base()}/public/api/cod/nested-codes/owner-check",
+            headers=_headers(api_key),
+            data=json.dumps(payload),
+            timeout=REQUEST_TIMEOUT,
+        )
+    except requests.RequestException as e:
+        return {"ok": False, "verdict": "error", "children": [],
+                "product_name": "", "gtin": "", "package_type": "",
+                "error": f"tarmoq xatosi: {e}", "http_status": 0}
+
+    if resp.status_code not in (200, 201):
+        return {"ok": False, "verdict": "error", "children": [],
+                "product_name": "", "gtin": "", "package_type": "",
+                "error": f"ASL HTTP {resp.status_code}: {resp.text[:200]}",
+                "http_status": resp.status_code}
+
+    try:
+        data = resp.json()
+    except Exception as e:
+        return {"ok": False, "verdict": "error", "children": [],
+                "product_name": "", "gtin": "", "package_type": "",
+                "error": f"ASL javobi noto'g'ri: {e}", "http_status": resp.status_code}
+
+    top = data.get("data", data) if isinstance(data, dict) else data
+    if not isinstance(top, dict):
+        return {"ok": False, "verdict": "error", "children": [],
+                "product_name": "", "gtin": "", "package_type": "",
+                "error": "ASL javobi kutilmagan shakl", "http_status": resp.status_code}
+
+    forbidden = {str(c) for c in (top.get("forbiddenCodes") or []) if c}
+    missing   = {str(c) for c in (top.get("missingCodes")   or []) if c}
+    if sscc in forbidden:
+        return {"ok": True, "verdict": "forbidden", "children": [],
+                "product_name": "", "gtin": "", "package_type": "",
+                "error": None, "http_status": resp.status_code}
+    if sscc in missing:
+        return {"ok": True, "verdict": "missing", "children": [],
+                "product_name": "", "gtin": "", "package_type": "",
+                "error": None, "http_status": resp.status_code}
+
+    results = top.get("results") or []
+    # Find the entry that matches our SSCC (ASL sometimes returns extras).
+    match = None
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        code = str(item.get("code") or "")
+        if code == sscc or (code and sscc.endswith(code)) or (code and code.endswith(sscc)):
+            match = item
+            break
+    if match is None and results:
+        # Fall back to the first result — sometimes ASL echoes the SSCC in a
+        # slightly different form (e.g. leading zeros trimmed).
+        match = results[0] if isinstance(results[0], dict) else None
+
+    if match is None:
+        # No verdict at all — treat as missing so the operator sees a clean
+        # rejection instead of a silent "0 children" success.
+        return {"ok": True, "verdict": "missing", "children": [],
+                "product_name": "", "gtin": "", "package_type": "",
+                "error": None, "http_status": resp.status_code}
+
+    children = _flatten_children({"data": match})
+    # Dedup + keep input order.
+    seen: set[str] = set()
+    unique: list[str] = []
+    for c in children:
+        if c and c not in seen:
+            seen.add(c); unique.append(c)
+
+    return {
+        "ok": True, "verdict": "owned", "children": unique,
+        "product_name": _localized_text(match.get("productName")
+                                        or match.get("product_name")
+                                        or _safe_get(match, "product", "name")),
+        "gtin":         str(match.get("gtin") or match.get("productGtin") or ""),
+        "package_type": str(match.get("packageType") or match.get("package_type") or ""),
+        "error": None, "http_status": resp.status_code,
+    }
+
+
 def _flatten_children(payload: Any) -> list[str]:
     """Walk the nested-codes response and pull out every UNIT-level KM.
 
