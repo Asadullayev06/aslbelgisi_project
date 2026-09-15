@@ -133,6 +133,7 @@ function Shell({ route, setRoute }: {
     return <ModeChooser onAggregation={() => setRoute({ kind: "picker" })}
                         onInventory={() => setRoute({ kind: "invPicker" })}
                         onReporting={() => setRoute({ kind: "repPicker" })}
+                        onBoxCheck={() => setRoute({ kind: "boxCheck" })}
                         onHome={() => setRoute({ kind: "home" })} />;
   }
   if (route.kind === "invPicker") {
@@ -185,7 +186,7 @@ function Shell({ route, setRoute }: {
     return <BarTenderCsv onExit={() => setRoute({ kind: "home" })} />;
   }
   if (route.kind === "boxCheck") {
-    return <BoxCheck onExit={() => setRoute({ kind: "home" })} />;
+    return <BoxCheck onExit={() => setRoute({ kind: "modeChooser" })} />;
   }
   return <Home onAggregation={() => setRoute({ kind: "modeChooser" })}
                onStock={() => setRoute({ kind: "stock" })}
@@ -194,15 +195,14 @@ function Shell({ route, setRoute }: {
                onSearch={() => setRoute({ kind: "search" })}
                onSscc={() => setRoute({ kind: "sscc" })}
                onBartender={() => setRoute({ kind: "bartender" })}
-               onBoxCheck={() => setRoute({ kind: "boxCheck" })}
                onAdmin={() => setRoute({ kind: "admin" })} />;
 }
 
 
 /** Chooser shown after clicking "Agregatsiya" on Home. */
-function ModeChooser({ onAggregation, onInventory, onReporting, onHome }: {
+function ModeChooser({ onAggregation, onInventory, onReporting, onBoxCheck, onHome }: {
   onAggregation: () => void; onInventory: () => void;
-  onReporting: () => void; onHome: () => void;
+  onReporting: () => void; onBoxCheck: () => void; onHome: () => void;
 }) {
   return (
     <div className="mx-auto max-w-6xl px-6 py-10">
@@ -220,7 +220,7 @@ function ModeChooser({ onAggregation, onInventory, onReporting, onHome }: {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <ToolCard
           icon={<Package className="size-8 text-accent" />}
           title="Haqiqiy Agregatsiya"
@@ -238,6 +238,12 @@ function ModeChooser({ onAggregation, onInventory, onReporting, onHome }: {
           title="Hisobot"
           subtitle="KM va SSCC ni bitta ro'yxatga skanerlash — faqat takrorlanish nazorati, Excel yuklab olish"
           onClick={onReporting}
+        />
+        <ToolCard
+          icon={<Boxes className="size-8 text-accent2" />}
+          title="Quti tekshiruvi"
+          subtitle="SSCC bo'yicha ASL dan KM ro'yxatini olib, jismoniy quti tarkibi bilan solishtirish"
+          onClick={onBoxCheck}
         />
       </div>
     </div>
@@ -593,7 +599,7 @@ function NewRepSeriesTopButton({ onClick, disabled }: { onClick: () => void; dis
 }
 
 
-function Home({ onAggregation, onStock, onInspector, onCustom, onSearch, onSscc, onBartender, onBoxCheck, onAdmin }: {
+function Home({ onAggregation, onStock, onInspector, onCustom, onSearch, onSscc, onBartender, onAdmin }: {
   onAggregation: () => void;
   onStock: () => void;
   onInspector: () => void;
@@ -601,7 +607,6 @@ function Home({ onAggregation, onStock, onInspector, onCustom, onSearch, onSscc,
   onSearch: () => void;
   onSscc: () => void;
   onBartender: () => void;
-  onBoxCheck: () => void;
   onAdmin: () => void;
 }) {
   const { user } = useAuth();
@@ -656,12 +661,6 @@ function Home({ onAggregation, onStock, onInspector, onCustom, onSearch, onSscc,
           title="BarTender CSV"
           subtitle="KM kodlarni printerga tayyor 5 ustunli CSV formatga aylantirish"
           onClick={onBartender}
-        />
-        <ToolCard
-          icon={<ClipboardList className="size-8 text-accent" />}
-          title="Quti tekshiruvi"
-          subtitle="SSCC bo'yicha ASL dan KM ro'yxatini olib, jismoniy quti tarkibi bilan solishtirish"
-          onClick={onBoxCheck}
         />
         {admin && (
           <ToolCard

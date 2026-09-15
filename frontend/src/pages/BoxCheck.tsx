@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowLeft, AlertTriangle, X, Package, ScanBarcode, CheckCircle2,
-  Trash2, Lock, Unlock,
+  Trash2, Lock, Unlock, ShieldCheck, ShieldAlert,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHead } from "@/components/ui/Card";
@@ -43,6 +43,19 @@ export function BoxCheck({ onExit }: Props) {
   const [ssccInput, setSsccInput] = useState("");
   const [openingBox, setOpeningBox] = useState(false);
   const [phase1Err, setPhase1Err] = useState<string | null>(null);
+  // Credential verify — an explicit "does this INN + key really work" check,
+  // so the operator knows the pair is good before scanning any SSCC.
+  type VerifyState =
+    | { kind: "idle" }
+    | { kind: "checking" }
+    | { kind: "ok"; expiresOn?: string }
+    | { kind: "bad"; reason: string };
+  const [verify, setVerify] = useState<VerifyState>({ kind: "idle" });
+  // If the operator edits either field after a verify, reset back to idle —
+  // the previous "ok" no longer applies to the new value.
+  useEffect(() => { setVerify(v => v.kind === "idle" ? v : { kind: "idle" }); },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [inn, apiKey]);
 
   // Phase 2 (active audit) state
   const [state, setState] = useState<BoxCheckState | null>(null);
@@ -215,6 +228,28 @@ export function BoxCheck({ onExit }: Props) {
     void drain();
   }, [storageKey, drain, push]);
 
+  async function verifyCreds() {
+    if (!inn.trim() || !apiKey.trim()) {
+      setVerify({ kind: "bad", reason: "INN va API kalitni to'ldiring" });
+      return;
+    }
+    setVerify({ kind: "checking" });
+    try {
+      const r = await api.stockVerify(inn.trim(), apiKey.trim());
+      if (!r.ok) {
+        setVerify({ kind: "bad", reason: r.error || "kalit qabul qilinmadi" });
+        return;
+      }
+      if (r.tin_correct === false) {
+        setVerify({ kind: "bad", reason: "API kalit bu INN ga tegishli emas" });
+        return;
+      }
+      setVerify({ kind: "ok", expiresOn: r.expires_on });
+    } catch (e: any) {
+      setVerify({ kind: "bad", reason: String(e.message || e) });
+    }
+  }
+
   // ── phase 1: open a box ─────────────────────────────────────
   async function openBox(rawSscc?: string) {
     const sscc = (rawSscc ?? ssccInput).trim();
@@ -339,32 +374,68 @@ export function BoxCheck({ onExit }: Props) {
                      placeholder="Business User API key" />
             </label>
           </div>
+          <div className="mt-3 flex items-center gap-3 flex-wrap">
+            <Button variant="outline" size="sm"
+                    onClick={verifyCreds}
+                    disabled={verify.kind === "checking" || !inn.trim() || !apiKey.trim()}>
+              <ShieldCheck className="size-3" />
+              {verify.kind === "checking" ? "Tekshirilmoqda…" : "INN va kalitni tekshirish"}
+            </Button>
+            {verify.kind === "ok" && (
+              <div className="inline-flex items-center gap-1.5 text-sm text-success">
+                <ShieldCheck className="size-4" />
+                <span>Tasdiqlandi{verify.expiresOn ? ` · kalit ${verify.expiresOn} gacha` : ""}</span>
+              </div>
+            )}
+            {verify.kind === "bad" && (
+              <div className="inline-flex items-center gap-1.5 text-sm text-danger">
+                <ShieldAlert className="size-4" />
+                <span>{verify.reason}</span>
+              </div>
+            )}
+            {verify.kind === "idle" && (inn.trim() && apiKey.trim()) && (
+              <span className="text-xs text-muted">
+                Skanerlashdan avval INN va kalit haqiqiyligini tekshiring.
+              </span>
+            )}
+          </div>
         </Card>
 
         <Card className="mb-4">
           <CardHead title="2. Karobka (SSCC) skanerlang"
-                    right={<Badge tone="accent">20 raqamli</Badge>} />
-          <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2 items-start">
-            <ScanInput
-              placeholder="SSCC ni skanerlang yoki qo'lda kiriting"
-              tone="accent"
-              disabled={openingBox || !inn.trim() || !apiKey.trim()}
-              onScan={raw => { setSsccInput(raw); void openBox(raw); }}
-            />
-            <Button variant="primary" size="lg" onClick={() => openBox()}
-                    disabled={openingBox || !inn.trim() || !apiKey.trim() || !ssccInput.trim()}>
-              <Package className="size-4" /> {openingBox ? "Ochilmoqda…" : "Qutini ochish"}
-            </Button>
-          </div>
+                    right={<Badge tone={verify.kind === "ok" ? "success" : "neutral"}>
+                      {verify.kind === "ok" ? "tayyor" : "kalit tekshirilmagan"}
+                    </Badge>} />
+          {verify.kind !== "ok" ? (
+            <div className="rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm text-warning inline-flex items-center gap-2">
+              <ShieldAlert className="size-4 shrink-0" />
+              Avval yuqoridagi "INN va kalitni tekshirish" tugmasini bosing.
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2 items-start">
+                <ScanInput
+                  placeholder="SSCC ni skanerlang yoki qo'lda kiriting"
+                  tone="accent"
+                  disabled={openingBox}
+                  onScan={raw => { setSsccInput(raw); void openBox(raw); }}
+                />
+                <Button variant="primary" size="lg" onClick={() => openBox()}
+                        disabled={openingBox || !ssccInput.trim()}>
+                  <Package className="size-4" /> {openingBox ? "Ochilmoqda…" : "Qutini ochish"}
+                </Button>
+              </div>
+              <div className="text-xs text-muted mt-3">
+                SSCC yuborilgandan keyin: ASL <b>egalik va bolalar</b> so'rovi yuboriladi.
+                Agar quti bu kompaniyaga tegishli bo'lmasa yoki ASL da topilmasa, rad etiladi.
+              </div>
+            </>
+          )}
           {phase1Err && (
             <div className="mt-3 rounded-lg border border-danger/40 bg-danger/10 p-3 text-sm text-danger">
               {phase1Err}
             </div>
           )}
-          <div className="text-xs text-muted mt-3">
-            SSCC yuborilgandan keyin: ASL <b>egalik va bolalar</b> so'rovi yuboriladi.
-            Agar quti bu kompaniyaga tegishli bo'lmasa yoki ASL da topilmasa, rad etiladi.
-          </div>
         </Card>
 
         {recent && recent.length > 0 && (
