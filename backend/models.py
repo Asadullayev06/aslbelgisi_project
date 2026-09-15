@@ -25,7 +25,7 @@ from .db import Base
 KM_STATUSES     = ("pending", "claimed", "aggregated")
 BOX_STATUSES    = ("pending", "used")
 PROJECT_STATUS  = ("active", "submitting", "submitted", "archived")
-PROJECT_MODES   = ("aggregation", "inventory", "reporting")
+PROJECT_MODES   = ("aggregation", "inventory", "reporting", "box_check")
 USER_ROLES      = ("admin", "operator")
 
 
@@ -327,6 +327,9 @@ class BoxCheck(Base):
     """
     __tablename__ = "box_checks"
     id:             Mapped[int]      = mapped_column(BigInteger, primary_key=True)
+    project_id:     Mapped[Optional[int]] = mapped_column(BigInteger,
+                                        ForeignKey("projects.id", ondelete="CASCADE"),
+                                        nullable=True)
     created_by:     Mapped[Optional[int]] = mapped_column(BigInteger,
                                         ForeignKey("users.id", ondelete="SET NULL"),
                                         nullable=True)

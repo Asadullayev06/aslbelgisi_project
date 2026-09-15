@@ -6,7 +6,8 @@ import type {
   KmParseResp, SsccParseResp, ModListResp, CustomAggRunResp, CustomAggRunBody,
   AnalysisResult, AslCompany,
   ReportState, ReportScanBatchResult,
-  BoxCheckState, BoxCheckScanBatchOut, BoxCheckSummary,
+  BoxCheckState, BoxCheckScanBatchOut,
+  BoxCheckProjectSummary, BoxCheckProjectState,
 } from "./types";
 
 // Called when any request comes back 401 so the shell can bounce to login.
@@ -91,7 +92,7 @@ export const api = {
   logout: () => req<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
 
   // projects
-  listProjects: (opts: { status?: string; mode?: "aggregation" | "inventory" | "reporting" } = {}) => {
+  listProjects: (opts: { status?: string; mode?: "aggregation" | "inventory" | "reporting" | "box_check" } = {}) => {
     const p = new URLSearchParams();
     if (opts.status) p.set("status", opts.status);
     if (opts.mode)   p.set("mode",   opts.mode);
@@ -339,9 +340,19 @@ export const api = {
     req<void>(`/api/asl-companies/${id}`, { method: "DELETE" }),
 
   // ── Box-check module — audit a physical box against ASL's records ──
-  boxCheckStart: (body: { inn: string; api_key: string; sscc: string; company_name?: string }) =>
-    req<BoxCheckState>("/api/box-check/scan-box",
-      { method: "POST", body: JSON.stringify(body) }, 60000),
+  /** Admin only — create one Quti tekshiruvi series (project). */
+  boxCheckCreateProject: (body: {
+    name: string; product_name: string; series_name: string;
+    inn: string; api_key: string;
+  }) => req<BoxCheckProjectSummary>("/api/box-check/projects",
+    { method: "POST", body: JSON.stringify(body) }),
+  /** Load the project + all audits under it. */
+  boxCheckGetProject: (projectId: number) =>
+    req<BoxCheckProjectState>(`/api/box-check/projects/${projectId}`),
+  /** Open a new box audit under a project — scans the SSCC, ASL returns children. */
+  boxCheckStart: (projectId: number, sscc: string) =>
+    req<BoxCheckState>(`/api/box-check/projects/${projectId}/scan-box`,
+      { method: "POST", body: JSON.stringify({ sscc }) }, 60000),
   boxCheckGet: (id: number) =>
     req<BoxCheckState>(`/api/box-check/${id}`),
   boxCheckScan: (id: number, codes: string[]) =>
@@ -353,8 +364,6 @@ export const api = {
     req<BoxCheckState>(`/api/box-check/${id}/reopen`, { method: "POST" }),
   boxCheckDelete: (id: number) =>
     req<void>(`/api/box-check/${id}`, { method: "DELETE" }),
-  boxCheckList: (mineOnly = true, limit = 50) =>
-    req<BoxCheckSummary[]>(`/api/box-check?mine_only=${mineOnly}&limit=${limit}`),
 
   // GTIN stock (Ostatok)
   stockVerify: (inn: string, api_key: string) =>

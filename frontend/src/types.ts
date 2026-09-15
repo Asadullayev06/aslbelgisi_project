@@ -2,7 +2,7 @@
 
 export type FlashLevel = "hit" | "err" | "warn";
 
-export type ProjectMode = "aggregation" | "inventory" | "reporting";
+export type ProjectMode = "aggregation" | "inventory" | "reporting" | "box_check";
 
 /** ── Reporting module — one flat list of scanned codes per series. ── */
 export interface ReportScanRow {
@@ -30,6 +30,7 @@ export type BoxCheckStatus = "active" | "closed_ok" | "closed_mismatch" | "aband
 
 export interface BoxCheckSummary {
   id: number;
+  project_id?: number | null;
   company_name: string;
   owner_inn: string;
   sscc: string;
@@ -40,6 +41,21 @@ export interface BoxCheckSummary {
   status: BoxCheckStatus;
   opened_at: string;
   closed_at?: string | null;
+}
+
+export interface BoxCheckProjectSummary {
+  id: number;
+  name: string;
+  product_name: string;
+  series: string;
+  asl_check_inn: string;
+  status: string;
+  created_at: string;
+}
+
+export interface BoxCheckProjectState {
+  project: BoxCheckProjectSummary;
+  audits: BoxCheckSummary[];
 }
 
 export interface BoxCheckScanRow {

@@ -19,6 +19,7 @@ import { BarTenderCsv } from "@/pages/BarTenderCsv";
 import { SetupReporting } from "@/pages/SetupReporting";
 import { ScanReporting } from "@/pages/ScanReporting";
 import { BoxCheck } from "@/pages/BoxCheck";
+import { SetupBoxCheck } from "@/pages/SetupBoxCheck";
 import { api, setUnauthorizedHandler } from "@/api";
 import { AuthContext, isAdmin, useAuth, type User } from "@/auth";
 import type { ProjectSummary } from "@/types";
@@ -41,7 +42,9 @@ type Route =
   | { kind: "search" }
   | { kind: "sscc" }
   | { kind: "bartender" }
-  | { kind: "boxCheck" }
+  | { kind: "bcPicker" }
+  | { kind: "bcSetup"; presetName?: string; presetProduct?: string }
+  | { kind: "bcScan"; projectId: number }
   | { kind: "admin" };
 
 export default function App() {
@@ -133,7 +136,7 @@ function Shell({ route, setRoute }: {
     return <ModeChooser onAggregation={() => setRoute({ kind: "picker" })}
                         onInventory={() => setRoute({ kind: "invPicker" })}
                         onReporting={() => setRoute({ kind: "repPicker" })}
-                        onBoxCheck={() => setRoute({ kind: "boxCheck" })}
+                        onBoxCheck={() => setRoute({ kind: "bcPicker" })}
                         onHome={() => setRoute({ kind: "home" })} />;
   }
   if (route.kind === "invPicker") {
@@ -185,8 +188,23 @@ function Shell({ route, setRoute }: {
   if (route.kind === "bartender") {
     return <BarTenderCsv onExit={() => setRoute({ kind: "home" })} />;
   }
-  if (route.kind === "boxCheck") {
-    return <BoxCheck onExit={() => setRoute({ kind: "modeChooser" })} />;
+  if (route.kind === "bcPicker") {
+    return <BcPicker onOpen={id => setRoute({ kind: "bcScan", projectId: id })}
+                     onNew={() => setRoute({ kind: "bcSetup" })}
+                     onNewSeries={(name, productName) =>
+                       setRoute({ kind: "bcSetup",
+                                  presetName: name, presetProduct: productName })}
+                     onHome={() => setRoute({ kind: "modeChooser" })} />;
+  }
+  if (route.kind === "bcSetup") {
+    return <SetupBoxCheck onCreated={id => setRoute({ kind: "bcScan", projectId: id })}
+                          onCancel={() => setRoute({ kind: "bcPicker" })}
+                          presetName={route.presetName}
+                          presetProduct={route.presetProduct} />;
+  }
+  if (route.kind === "bcScan") {
+    return <BoxCheck projectId={route.projectId}
+                     onExit={() => setRoute({ kind: "bcPicker" })} />;
   }
   return <Home onAggregation={() => setRoute({ kind: "modeChooser" })}
                onStock={() => setRoute({ kind: "stock" })}
@@ -594,6 +612,162 @@ function NewRepSeriesTopButton({ onClick, disabled }: { onClick: () => void; dis
     <Button variant="outline" size="lg" onClick={onClick} disabled={disabled}
             title={disabled ? "Avval hisobot loyihasi yarating" : "Mavjud mahsulotga yangi seriya qo'shish"}>
       <Plus className="size-4" /> Yangi seriya qo'shish
+    </Button>
+  );
+}
+
+
+/** Quti-tekshiruvi picker — same product-grouped structure as inventory /
+ *  reporting. Each series is a project; click one to open its scan page. */
+function BcPicker({ onOpen, onNew, onNewSeries, onHome }: {
+  onOpen: (id: number) => void;
+  onNew: () => void;
+  onNewSeries: (name: string, productName: string) => void;
+  onHome: () => void;
+}) {
+  const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [openKey, setOpenKey] = useState<string | null>(null);
+  const load = () => {
+    setErr(null);
+    api.listProjects({ mode: "box_check" })
+      .then(setProjects).catch(e => setErr(String(e)));
+  };
+  useEffect(load, []);
+
+  const groups = projects ? groupByProduct(projects) : [];
+
+  return (
+    <div className="mx-auto max-w-6xl px-6 py-10">
+      <TopBar />
+      <button onClick={onHome}
+              className="text-muted hover:text-text inline-flex items-center gap-1 mb-4">
+        <ArrowLeft className="size-4" /> Ortga
+      </button>
+      <div className="mb-6 flex items-baseline justify-between gap-4 flex-wrap">
+        <div>
+          <div className="text-3xl font-extrabold tracking-tight text-accent2">
+            Quti tekshiruvi loyihalari
+          </div>
+          <div className="text-muted text-sm mt-1">
+            Mahsulotni tanlang → seriyani tanlang → SSCC skanerlashni boshlang
+          </div>
+        </div>
+        <NewBcProjectButton onClick={onNew} />
+      </div>
+
+      <Card>
+        <CardHead title="Mahsulotlar"
+                  right={<Badge tone="neutral">{groups.length}</Badge>} />
+        {err && (
+          <div className="rounded-lg border border-danger/40 bg-danger/10 p-3 text-sm text-danger">
+            {err}
+          </div>
+        )}
+        {!projects && !err && <div className="text-muted text-sm">Yuklanmoqda…</div>}
+        {projects && projects.length === 0 && (
+          <div className="text-muted text-sm py-6 text-center italic">
+            Hali birorta Quti tekshiruvi loyihasi yaratilmagan.
+          </div>
+        )}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {groups.map(g => {
+            const key = `${g.name}::${g.productName}`;
+            const isOpen = openKey === key;
+            return (
+              <BcProductGroupRow key={key}
+                                 group={g}
+                                 isOpen={isOpen}
+                                 onToggle={() => setOpenKey(isOpen ? null : key)}
+                                 onOpen={onOpen}
+                                 onAddSeries={() => onNewSeries(g.name, g.productName)}
+                                 onChanged={load} />
+            );
+          })}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function BcProductGroupRow({ group, isOpen, onToggle, onOpen, onAddSeries, onChanged }: {
+  group: { name: string; productName: string; projects: ProjectSummary[] };
+  isOpen: boolean;
+  onToggle: () => void;
+  onOpen: (id: number) => void;
+  onAddSeries: () => void;
+  onChanged: () => void;
+}) {
+  const { user } = useAuth();
+  const admin = isAdmin(user);
+  return (
+    <div className="rounded-xl border border-border bg-surface2/40 overflow-hidden hover:border-accent2/40 transition-colors">
+      <button onClick={onToggle}
+              className="w-full text-left p-4 hover:bg-surface2/70 transition-colors">
+        <div className="flex items-center justify-between gap-2 mb-1">
+          <div className="flex items-center gap-2 min-w-0">
+            <Boxes className="size-4 text-accent2 shrink-0" />
+            <span className="font-semibold truncate">{group.name}</span>
+          </div>
+          <Badge tone="accent">{group.projects.length} seriya</Badge>
+        </div>
+        <div className="text-sm text-muted truncate">{group.productName}</div>
+        <div className="text-xs text-muted/80 mt-1">
+          {isOpen ? "Yopish" : "Seriyalarni ochish"}
+        </div>
+      </button>
+
+      {isOpen && (
+        <div className="border-t border-border bg-surface/40 p-3 flex flex-col gap-2">
+          {group.projects.map(p => (
+            <BcSeriesRow key={p.id} p={p} onOpen={onOpen} onChanged={onChanged} />
+          ))}
+          {admin && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onAddSeries(); }}
+              className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-accent2/40
+                         text-accent2 px-3 py-2 text-sm font-semibold hover:bg-accent2/10 transition-colors"
+            >
+              <Plus className="size-4" /> Yangi seriya qo'shish
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BcSeriesRow({ p, onOpen, onChanged }: {
+  p: ProjectSummary; onOpen: (id: number) => void; onChanged: () => void;
+}) {
+  const { user } = useAuth();
+  const admin = isAdmin(user);
+  return (
+    <div className="group relative rounded-lg border border-border bg-surface2/40 hover:bg-surface2/70 hover:border-accent2/40 transition-colors">
+      <button onClick={() => onOpen(p.id)} className="w-full text-left px-3 py-2">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0 text-sm">
+            <span className="font-mono text-muted shrink-0">seriya:</span>
+            <span className="font-semibold truncate">{p.series || "—"}</span>
+          </div>
+          <Badge tone="accent">quti tekshiruvi</Badge>
+        </div>
+      </button>
+      {admin && (
+        <div className="absolute top-1.5 right-1.5 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          <ProjectAdminActions p={p} onChanged={onChanged} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NewBcProjectButton({ onClick }: { onClick: () => void }) {
+  const { user } = useAuth();
+  if (!isAdmin(user)) return null;
+  return (
+    <Button variant="primary" size="lg" onClick={onClick}>
+      <Plus className="size-4" /> Yangi Quti tekshiruvi
     </Button>
   );
 }
