@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  ArrowLeft, AlertTriangle, X, Package, ScanBarcode, RefreshCw, CheckCircle2,
+  ArrowLeft, AlertTriangle, X, Package, ScanBarcode, CheckCircle2,
   Trash2, Lock, Unlock,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
