@@ -13,12 +13,13 @@ export default {
         muted:     "hsl(var(--muted))",
         accent:    "hsl(var(--accent))",
         accent2:   "hsl(var(--accent-2))",
+        brand2:    "hsl(var(--brand-2))",
         success:   "hsl(var(--success))",
         warning:   "hsl(var(--warning))",
         danger:    "hsl(var(--danger))",
       },
       fontFamily: {
-        sans: ["Inter", "ui-sans-serif", "system-ui", "sans-serif"],
+        sans: ["Plus Jakarta Sans", "Inter", "ui-sans-serif", "system-ui", "sans-serif"],
         mono: ["ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
       },
       boxShadow: {

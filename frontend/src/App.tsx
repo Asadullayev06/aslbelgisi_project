@@ -22,6 +22,8 @@ import { BoxCheck } from "@/pages/BoxCheck";
 import { SetupBoxCheck } from "@/pages/SetupBoxCheck";
 import { api, setUnauthorizedHandler } from "@/api";
 import { AuthContext, isAdmin, useAuth, type User } from "@/auth";
+import { useDesign, DesignSwitch } from "@/design";
+import { AppShell, type NavDest } from "@/components/AppShell";
 import type { ProjectSummary } from "@/types";
 
 type Route =
@@ -96,7 +98,83 @@ export default function App() {
 }
 
 
-function Shell({ route, setRoute }: {
+/** Chooses which chrome wraps the page: the new sidebar workspace or the
+ *  original tile-picker flow. The page content itself (`ClassicShell`) is
+ *  shared — only the surrounding navigation differs. */
+function Shell({ route, setRoute }: { route: Route; setRoute: (r: Route) => void }) {
+  const { variant } = useDesign();
+  if (variant === "sidebar") {
+    const navigate = (dest: NavDest) => setRoute(destToRoute(dest));
+    const page = route.kind === "home"
+      ? <Dashboard onNavigate={navigate} />
+      : <ClassicShell route={route} setRoute={setRoute} />;
+    return (
+      <AppShell activeKey={activeKeyFor(route)} title={titleFor(route)} onNavigate={navigate}>
+        {page}
+      </AppShell>
+    );
+  }
+  return <ClassicShell route={route} setRoute={setRoute} />;
+}
+
+function destToRoute(dest: NavDest): Route {
+  switch (dest) {
+    case "home":        return { kind: "home" };
+    case "aggregation": return { kind: "picker" };
+    case "inventory":   return { kind: "invPicker" };
+    case "reporting":   return { kind: "repPicker" };
+    case "boxcheck":    return { kind: "bcPicker" };
+    case "stock":       return { kind: "stock" };
+    case "inspector":   return { kind: "inspector" };
+    case "custom":      return { kind: "custom" };
+    case "search":      return { kind: "search" };
+    case "sscc":        return { kind: "sscc" };
+    case "bartender":   return { kind: "bartender" };
+    case "admin":       return { kind: "admin" };
+    default:            return { kind: "home" };
+  }
+}
+
+function activeKeyFor(route: Route): NavDest | null {
+  switch (route.kind) {
+    case "home":                                     return "home";
+    case "picker": case "setup": case "scan":        return "aggregation";
+    case "invPicker": case "invSetup": case "invScan": return "inventory";
+    case "repPicker": case "repSetup": case "repScan": return "reporting";
+    case "bcPicker": case "bcSetup": case "bcScan":  return "boxcheck";
+    case "stock":                                    return "stock";
+    case "inspector":                                return "inspector";
+    case "custom":                                   return "custom";
+    case "search":                                   return "search";
+    case "sscc":                                     return "sscc";
+    case "bartender":                                return "bartender";
+    case "admin":                                    return "admin";
+    case "modeChooser":                              return "home";
+    default:                                         return null;
+  }
+}
+
+function titleFor(route: Route): string {
+  switch (route.kind) {
+    case "home":                                     return "Boshqaruv paneli";
+    case "picker": case "setup": case "scan":        return "Agregatsiya";
+    case "invPicker": case "invSetup": case "invScan": return "Inventarizatsiya";
+    case "repPicker": case "repSetup": case "repScan": return "Hisobot";
+    case "bcPicker": case "bcSetup": case "bcScan":  return "Quti tekshiruvi";
+    case "stock":                                    return "GTIN Ostatok";
+    case "inspector":                                return "Marka Kod Tekshiruvi";
+    case "custom":                                   return "Custom Aggregation";
+    case "search":                                   return "Kod Qidiruv";
+    case "sscc":                                     return "SSCC";
+    case "bartender":                                return "BarTender CSV";
+    case "admin":                                    return "Admin sozlamalari";
+    case "modeChooser":                              return "Agregatsiya";
+    default:                                          return "Asl Belgisi";
+  }
+}
+
+
+function ClassicShell({ route, setRoute }: {
   route: Route;
   setRoute: (r: Route) => void;
 }) {
@@ -773,6 +851,65 @@ function NewBcProjectButton({ onClick }: { onClick: () => void }) {
 }
 
 
+/** Sidebar-mode landing page. Welcome + quick access to every module.
+ *  Navigation goes through the shell's `onNavigate`, so no floating chrome. */
+function Dashboard({ onNavigate }: { onNavigate: (dest: NavDest) => void }) {
+  const { user } = useAuth();
+  const admin = isAdmin(user);
+  return (
+    <div className="mx-auto max-w-6xl px-7 py-7">
+      <div className="mb-7">
+        <h1 className="text-2xl font-extrabold tracking-tight">Xush kelibsiz, {user?.username}</h1>
+        <p className="text-muted text-sm mt-1">Ish maydoni — asosiy modullar va vositalar</p>
+      </div>
+
+      <div className="text-[13px] font-bold text-text/70 mb-3">Asosiy modullar</div>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        <ToolCard icon={<Package className="size-8 text-accent" />} title="Agregatsiya"
+                  subtitle="Karobkalarga joylash va ommaviy agregatsiya"
+                  onClick={() => onNavigate("aggregation")} />
+        <ToolCard icon={<ClipboardList className="size-8 text-warning" />} title="Inventarizatsiya"
+                  subtitle="Omborni sanash — cheklangan miqdorsiz skanerlash"
+                  onClick={() => onNavigate("inventory")} />
+        <ToolCard icon={<Layers className="size-8 text-accent" />} title="Hisobot"
+                  subtitle="KM va SSCC ni ro'yxatga olish · Excel"
+                  onClick={() => onNavigate("reporting")} />
+        <ToolCard icon={<Boxes className="size-8 text-accent" />} title="Quti tekshiruvi"
+                  subtitle="SSCC bo'yicha ASL dan KM ro'yxatini solishtirish"
+                  onClick={() => onNavigate("boxcheck")} />
+      </div>
+
+      <div className="text-[13px] font-bold text-text/70 mb-3">Vositalar</div>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <ToolCard icon={<Barcode className="size-8 text-accent" />} title="GTIN Ostatok"
+                  subtitle="GTIN bo'yicha real vaqtdagi kompaniya qoldiqlari"
+                  onClick={() => onNavigate("stock")} />
+        <ToolCard icon={<ScanLine className="size-8 text-accent" />} title="Marka Kod Tekshiruvi"
+                  subtitle="Bitta yoki bir nechta KM kod bo'yicha batafsil ma'lumot"
+                  onClick={() => onNavigate("inspector")} />
+        <ToolCard icon={<Layers className="size-8 text-accent" />} title="Custom Aggregation"
+                  subtitle="CSV yuklab, guruhlarga bo'lib, ASL ga yuborish"
+                  onClick={() => onNavigate("custom")} />
+        <ToolCard icon={<Search className="size-8 text-accent" />} title="Kod Qidiruv"
+                  subtitle="Ichki bazadan KM/quti kodini qidirish · Excel"
+                  onClick={() => onNavigate("search")} />
+        <ToolCard icon={<ScanBarcode className="size-8 text-accent" />} title="SSCC"
+                  subtitle="20 raqamli ichki quti kodlarini yaratish · GS1"
+                  onClick={() => onNavigate("sscc")} />
+        <ToolCard icon={<Printer className="size-8 text-accent" />} title="BarTender CSV"
+                  subtitle="KM kodlarni printerga tayyor CSV formatga aylantirish"
+                  onClick={() => onNavigate("bartender")} />
+        {admin && (
+          <ToolCard icon={<Settings className="size-8 text-accent" />} title="Admin sozlamalari"
+                    subtitle="Foydalanuvchilarni yaratish, tahrirlash va o'chirish"
+                    onClick={() => onNavigate("admin")} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+
 function Home({ onAggregation, onStock, onInspector, onCustom, onSearch, onSscc, onBartender, onAdmin }: {
   onAggregation: () => void;
   onStock: () => void;
@@ -1136,8 +1273,13 @@ function Picker({ onOpen, onNew, onNewSeriesPick, onNewSeries, onHome }: {
 
 
 function TopBar() {
+  const { variant } = useDesign();
+  // In sidebar mode the shell already carries the user chip + switcher, so the
+  // floating classic bar would just duplicate them.
+  if (variant === "sidebar") return null;
   return (
-    <div className="fixed top-3 right-3 z-40">
+    <div className="fixed top-3 right-3 z-40 flex items-center gap-2">
+      <DesignSwitch compact />
       <UserChip />
     </div>
   );
