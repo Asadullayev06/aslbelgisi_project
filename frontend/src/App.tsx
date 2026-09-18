@@ -1116,12 +1116,17 @@ function ProjectAdminActions({ p, onChanged }: {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(p.name);
   const [productName, setProductName] = useState(p.product_name);
+  const [series, setSeries] = useState(p.series || "");
   const [busy, setBusy] = useState(false);
 
   async function save() {
     setBusy(true);
     try {
-      await api.updateProject(p.id, { name: name.trim(), product_name: productName.trim() });
+      await api.updateProject(p.id, {
+        name: name.trim(),
+        product_name: productName.trim(),
+        series: series.trim(),
+      });
       setEditing(false);
       onChanged();
     } catch (e: any) { alert(String(e.message || e)); }
@@ -1140,11 +1145,15 @@ function ProjectAdminActions({ p, onChanged }: {
   }
   if (editing) {
     return (
-      <div className="absolute right-1.5 top-1.5 z-10 flex flex-col gap-1 rounded-lg border border-accent/50 bg-surface p-2 shadow-lg w-64">
+      <div className="absolute right-1.5 top-1.5 z-10 flex flex-col gap-1 rounded-lg border border-accent/50 bg-surface p-2 shadow-lg w-72" onClick={(e) => e.stopPropagation()}>
+        <label className="text-[10px] uppercase tracking-widest text-muted">Loyiha nomi</label>
         <Input value={name} onChange={e => setName(e.target.value)} placeholder="Loyiha nomi" />
+        <label className="text-[10px] uppercase tracking-widest text-muted mt-1">Mahsulot</label>
         <Input value={productName} onChange={e => setProductName(e.target.value)} placeholder="Mahsulot nomi" />
-        <div className="flex gap-1 justify-end">
-          <Button variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); setEditing(false); setName(p.name); setProductName(p.product_name); }}>
+        <label className="text-[10px] uppercase tracking-widest text-muted mt-1">Seriya</label>
+        <Input value={series} onChange={e => setSeries(e.target.value)} placeholder="Seriya" />
+        <div className="flex gap-1 justify-end mt-1">
+          <Button variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); setEditing(false); setName(p.name); setProductName(p.product_name); setSeries(p.series || ""); }}>
             <X className="size-3" />
           </Button>
           <Button variant="primary" size="sm" onClick={(e) => { e.stopPropagation(); save(); }} disabled={busy || !name.trim() || !productName.trim()}>
