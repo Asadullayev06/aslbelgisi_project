@@ -3,6 +3,7 @@
 export type FlashLevel = "hit" | "err" | "warn";
 
 export type ProjectMode = "aggregation" | "inventory" | "reporting" | "box_check";
+export type ReportKind = "km" | "sscc" | "mixed";
 
 /** ── Reporting module — one flat list of scanned codes per series. ── */
 export interface ReportScanRow {
@@ -141,6 +142,7 @@ export interface ProjectSummary {
   mode?: ProjectMode;
   series?: string;
   asl_check_enabled?: boolean;   // inventory: this series is ASL-validated
+  report_kind?: ReportKind;      // reporting only
   created_at: string;
 }
 

@@ -34,6 +34,9 @@ class ReportProjectCreate(BaseModel):
     name: str = Field(min_length=1)
     product_name: str = Field(min_length=1)
     series_name: str = Field(min_length=1)
+    # 'km' | 'sscc' | 'mixed'. Existing UIs that don't send it fall back to
+    # the historic behaviour ('sscc' — that's what operators had been scanning).
+    report_kind: str = "sscc"
 
 
 class ScanIn(BaseModel):
@@ -118,6 +121,9 @@ def create_project(body: ReportProjectCreate,
     name = body.name.strip()
     product = body.product_name.strip()
     series = body.series_name.strip()
+    kind = (body.report_kind or "sscc").strip().lower()
+    if kind not in ("km", "sscc", "mixed"):
+        raise HTTPException(400, "report_kind noto'g'ri (km | sscc | mixed)")
 
     # Duplicate series within the same product group -> 409, same rule as inventory.
     clash = sess.execute(
@@ -138,12 +144,13 @@ def create_project(body: ReportProjectCreate,
         business_place_id="", production_order_id="",
         status="active",
         mode="reporting",
+        report_kind=kind,
         created_by=u.id,
     )
     sess.add(p)
     sess.flush()
     return {"id": p.id, "name": p.name, "product_name": p.product_name,
-            "series": p.series}
+            "series": p.series, "report_kind": p.report_kind}
 
 
 @router.get("/projects/{project_id}", response_model=ReportState)
@@ -168,12 +175,24 @@ def scan_batch(project_id: int, body: BatchIn,
     if not codes:
         raise HTTPException(400, "codes required")
 
+    allowed_kind = (project.report_kind or "sscc").lower()
+
     results: list[ScanResult] = []
     for raw in codes:
         code, kind = _canonicalize(raw)
         if kind == "unknown":
             results.append(ScanResult(code=code, kind="unknown", accepted=False,
                                       reason=f"tanib bo'lmadigan kod: {raw[:40]}"))
+            continue
+        # Kind gate: km-only projects reject SSCC, sscc-only reject KM; mixed
+        # accepts both.  A friendly reason so operators know why it stopped.
+        if allowed_kind == "km" and kind != "km":
+            results.append(ScanResult(code=code, kind=kind, accepted=False,
+                                      reason="bu loyiha faqat KM kodlarni qabul qiladi"))
+            continue
+        if allowed_kind == "sscc" and kind != "sscc":
+            results.append(ScanResult(code=code, kind=kind, accepted=False,
+                                      reason="bu loyiha faqat SSCC kodlarni qabul qiladi"))
             continue
         # Atomic: insert if not there, else no-op. psycopg reports rowcount=-1
         # for ON CONFLICT DO NOTHING regardless of insert vs conflict, so we

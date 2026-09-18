@@ -62,6 +62,12 @@ class Project(Base):
     # inventory   = warehouse counting: multiple series per project, free-form
     #               box sizes, extras allowed, never submitted to ASL.
     mode:                Mapped[str]      = mapped_column(Text, nullable=False, default="aggregation")
+    # Reporting only: what the operator is scanning into this series.
+    #   'km'    — only KM codes; SSCC is rejected.
+    #   'sscc'  — only SSCC codes; KM is rejected.
+    #   'mixed' — both, KMs first then SSCCs at the end.
+    # Ignored for other modes.
+    report_kind:         Mapped[str]      = mapped_column(Text, nullable=False, default="sscc")
     # "Open" pools: admin created the aggregation project without uploading
     # the KM (or SSCC) manifest. Scans of unknown codes get auto-registered
     # rather than rejected as 'not in list'; duplicates still refuse. Set

@@ -62,6 +62,7 @@ class ProjectSummary(BaseModel):
     mode: str = "aggregation"
     series: str = ""
     asl_check_enabled: bool = False   # inventory: this series is ASL-validated
+    report_kind: str = "sscc"         # reporting only: km | sscc | mixed
     created_at: datetime
 
 

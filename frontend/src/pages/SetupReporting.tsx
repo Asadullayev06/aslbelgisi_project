@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Play, Layers } from "lucide-react";
+import { ArrowLeft, Play, Layers, ScanLine, Barcode, Boxes } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHead } from "@/components/ui/Card";
 import { Field, Input } from "@/components/ui/Input";
 import { Badge } from "@/components/ui/Badge";
 import { Toaster, useFlashes } from "@/components/ui/Toast";
 import { api } from "@/api";
-import type { ProjectSummary } from "@/types";
+import type { ProjectSummary, ReportKind } from "@/types";
 
 interface Props {
   onCreated: (projectId: number) => void;
@@ -24,6 +24,7 @@ export function SetupReporting({ onCreated, onCancel, presetName, presetProduct,
   const [name, setName]               = useState(presetName || "");
   const [productName, setProductName] = useState(presetProduct || "");
   const [seriesName, setSeriesName]   = useState("");
+  const [reportKind, setReportKind]   = useState<ReportKind>("sscc");
   const [busy, setBusy]               = useState(false);
   const { flashes, push, dismiss }    = useFlashes();
 
@@ -77,6 +78,7 @@ export function SetupReporting({ onCreated, onCancel, presetName, presetProduct,
       const p = await api.reportingCreate({
         name: name.trim(), product_name: productName.trim(),
         series_name: seriesName.trim(),
+        report_kind: reportKind,
       });
       onCreated(p.id);
     } catch (e: any) {
@@ -159,6 +161,37 @@ export function SetupReporting({ onCreated, onCancel, presetName, presetProduct,
         </div>
       </Card>
 
+      <Card className="mb-4">
+        <CardHead title="Hisobot turi"
+                  right={<Badge tone="neutral">majburiy</Badge>} />
+        <div className="text-xs text-muted mb-3">
+          Nima skanerlanadi va tekshiriladi. Yaratilgandan keyin turini o'zgartirib bo'lmaydi.
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <KindOption
+            icon={<ScanLine className="size-6" />}
+            title="Faqat KM"
+            subtitle="Faqat KM kodlar skanerlanadi. Bir xil KM ikkinchi marta qabul qilinmaydi."
+            selected={reportKind === "km"}
+            onSelect={() => setReportKind("km")}
+          />
+          <KindOption
+            icon={<Barcode className="size-6" />}
+            title="Faqat SSCC"
+            subtitle="Faqat quti (SSCC) kodlar skanerlanadi. Bir xil SSCC ikkinchi marta qabul qilinmaydi."
+            selected={reportKind === "sscc"}
+            onSelect={() => setReportKind("sscc")}
+          />
+          <KindOption
+            icon={<Boxes className="size-6" />}
+            title="Ikkalasi (KM + SSCC)"
+            subtitle="Avval KM lar, so'ng oxirida SSCC. Har ikkalasida takror bo'lmaydi."
+            selected={reportKind === "mixed"}
+            onSelect={() => setReportKind("mixed")}
+          />
+        </div>
+      </Card>
+
       <div className="flex items-center justify-end gap-2">
         <Button variant="secondary" onClick={onCancel} disabled={busy}>Bekor</Button>
         <Button variant="primary" size="lg" onClick={submit} disabled={busy}>
@@ -166,5 +199,24 @@ export function SetupReporting({ onCreated, onCancel, presetName, presetProduct,
         </Button>
       </div>
     </div>
+  );
+}
+
+function KindOption({ icon, title, subtitle, selected, onSelect }: {
+  icon: React.ReactNode; title: string; subtitle: string;
+  selected: boolean; onSelect: () => void;
+}) {
+  return (
+    <button type="button" onClick={onSelect}
+            className={
+              "text-left rounded-xl border p-4 transition-colors " +
+              (selected
+                ? "border-accent bg-accent/10 ring-2 ring-accent/40"
+                : "border-border bg-surface2/40 hover:border-accent/40 hover:bg-surface2/70")
+            }>
+      <div className={"mb-2 " + (selected ? "text-accent" : "text-muted")}>{icon}</div>
+      <div className="font-bold text-sm">{title}</div>
+      <div className="text-xs text-muted mt-1 leading-snug">{subtitle}</div>
+    </button>
   );
 }

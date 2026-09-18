@@ -32,7 +32,7 @@ export function ScanReporting({ projectId, onExit }: Props) {
   const { user } = useAuth();
   const admin = isAdmin(user);
   const [state, setState] = useState<ReportState | null>(null);
-  const [projectMeta, setProjectMeta] = useState<{ name: string; product_name: string; series: string } | null>(null);
+  const [projectMeta, setProjectMeta] = useState<{ name: string; product_name: string; series: string; report_kind: "km" | "sscc" | "mixed" } | null>(null);
   const [loadingErr, setLoadingErr] = useState<string | null>(null);
   const { flashes, push, dismiss } = useFlashes();
   const scannerRef = useRef<ScanInputHandle>(null);
@@ -84,6 +84,7 @@ export function ScanReporting({ projectId, onExit }: Props) {
           name: s.project.name,
           product_name: s.project.product_name,
           series: s.project.series || "",
+          report_kind: ((s.project as any).report_kind || "sscc") as "km" | "sscc" | "mixed",
         });
       })
       .catch(e => { if (alive) setLoadingErr(String(e)); });
@@ -308,7 +309,11 @@ export function ScanReporting({ projectId, onExit }: Props) {
         <div className="text-right">
           <div className="text-2xl font-extrabold tracking-tight text-accent">{projectMeta.name}</div>
           <div className="text-muted text-sm">
-            {projectMeta.product_name} · seriya {projectMeta.series || "—"} · hisobot
+            {projectMeta.product_name} · seriya {projectMeta.series || "—"} · {
+              projectMeta.report_kind === "km" ? "faqat KM"
+              : projectMeta.report_kind === "sscc" ? "faqat SSCC"
+              : "KM + SSCC"
+            }
           </div>
         </div>
       </div>
@@ -346,10 +351,21 @@ export function ScanReporting({ projectId, onExit }: Props) {
         {/* LEFT: scanner + rejects */}
         <div className="flex flex-col gap-4">
           <Card>
-            <CardHead title="Skanerlash" right={<Badge tone="accent">KM / SSCC</Badge>} />
+            <CardHead title="Skanerlash"
+                      right={<Badge tone="accent">
+                        {projectMeta.report_kind === "km" ? "KM"
+                          : projectMeta.report_kind === "sscc" ? "SSCC"
+                          : "KM + SSCC"}
+                      </Badge>} />
             <ScanInput
               ref={scannerRef}
-              placeholder="KM yoki SSCC skanerlang — bir xil kod ikkinchi marta qabul qilinmaydi"
+              placeholder={
+                projectMeta.report_kind === "km"
+                  ? "KM skanerlang — bir xil KM ikkinchi marta qabul qilinmaydi"
+                  : projectMeta.report_kind === "sscc"
+                    ? "SSCC skanerlang — bir xil SSCC ikkinchi marta qabul qilinmaydi"
+                    : "KM yoki SSCC skanerlang — bir xil kod ikkinchi marta qabul qilinmaydi"
+              }
               tone="accent"
               onScan={handleScan}
             />

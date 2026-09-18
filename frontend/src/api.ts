@@ -136,8 +136,11 @@ export const api = {
 
   // ── Reporting module ────────────────────────────────────
   /** Admin only. */
-  reportingCreate: (body: { name: string; product_name: string; series_name: string }) =>
-    req<{ id: number; name: string; product_name: string; series: string }>(
+  reportingCreate: (body: {
+    name: string; product_name: string; series_name: string;
+    report_kind: "km" | "sscc" | "mixed";
+  }) =>
+    req<{ id: number; name: string; product_name: string; series: string; report_kind: string }>(
       "/api/reporting/projects",
       { method: "POST", body: JSON.stringify(body) }),
   reportingGet: (projectId: number) =>

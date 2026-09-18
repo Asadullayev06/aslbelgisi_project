@@ -537,6 +537,7 @@ function RepPicker({ onOpen, onNew, onNewSeriesPick, onNewSeries, onHome }: {
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [openKey, setOpenKey] = useState<string | null>(null);
+  const [kindFilter, setKindFilter] = useState<"all" | "km" | "sscc" | "mixed">("all");
   const load = () => {
     setErr(null);
     api.listProjects({ mode: "reporting" })
@@ -544,7 +545,11 @@ function RepPicker({ onOpen, onNew, onNewSeriesPick, onNewSeries, onHome }: {
   };
   useEffect(load, []);
 
-  const groups = projects ? groupByProduct(projects) : [];
+  const filtered = (projects || []).filter(p => {
+    if (kindFilter === "all") return true;
+    return (p.report_kind || "sscc") === kindFilter;
+  });
+  const groups = projects ? groupByProduct(filtered) : [];
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-10">
@@ -571,6 +576,15 @@ function RepPicker({ onOpen, onNew, onNewSeriesPick, onNewSeries, onHome }: {
       <Card>
         <CardHead title="Mahsulotlar"
                   right={<Badge tone="neutral">{groups.length}</Badge>} />
+        {projects && projects.length > 0 && (
+          <div className="mb-3 flex items-center gap-2 flex-wrap">
+            <span className="text-xs uppercase tracking-widest text-muted">Tur:</span>
+            <RepKindFilterButton label="Hammasi" value="all"    current={kindFilter} onClick={setKindFilter} />
+            <RepKindFilterButton label="Faqat KM" value="km"    current={kindFilter} onClick={setKindFilter} />
+            <RepKindFilterButton label="Faqat SSCC" value="sscc" current={kindFilter} onClick={setKindFilter} />
+            <RepKindFilterButton label="KM + SSCC" value="mixed" current={kindFilter} onClick={setKindFilter} />
+          </div>
+        )}
         {err && (
           <div className="rounded-lg border border-danger/40 bg-danger/10 p-3 text-sm text-danger">
             {err}
@@ -580,6 +594,11 @@ function RepPicker({ onOpen, onNew, onNewSeriesPick, onNewSeries, onHome }: {
         {projects && projects.length === 0 && (
           <div className="text-muted text-sm py-6 text-center italic">
             Hali birorta hisobot loyihasi yaratilmagan.
+          </div>
+        )}
+        {projects && projects.length > 0 && groups.length === 0 && (
+          <div className="text-muted text-sm py-6 text-center italic">
+            Bu turdagi hisobot yo'q. Filterni almashtiring.
           </div>
         )}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -654,6 +673,8 @@ function RepSeriesRow({ p, onOpen, onChanged }: {
 }) {
   const { user } = useAuth();
   const admin = isAdmin(user);
+  const kind = p.report_kind || "sscc";
+  const kindLabel = kind === "km" ? "faqat KM" : kind === "sscc" ? "faqat SSCC" : "KM + SSCC";
   return (
     <div className="group relative rounded-lg border border-border bg-surface2/40 hover:bg-surface2/70 hover:border-accent/40 transition-colors">
       <button onClick={() => onOpen(p.id)} className="w-full text-left px-3 py-2">
@@ -662,7 +683,7 @@ function RepSeriesRow({ p, onOpen, onChanged }: {
             <span className="font-mono text-muted shrink-0">seriya:</span>
             <span className="font-semibold truncate">{p.series || "—"}</span>
           </div>
-          <Badge tone="accent">hisobot</Badge>
+          <Badge tone="accent">{kindLabel}</Badge>
         </div>
       </button>
       {admin && (
@@ -673,6 +694,27 @@ function RepSeriesRow({ p, onOpen, onChanged }: {
     </div>
   );
 }
+
+function RepKindFilterButton({ label, value, current, onClick }: {
+  label: string;
+  value: "all" | "km" | "sscc" | "mixed";
+  current: "all" | "km" | "sscc" | "mixed";
+  onClick: (v: "all" | "km" | "sscc" | "mixed") => void;
+}) {
+  const active = value === current;
+  return (
+    <button onClick={() => onClick(value)}
+            className={
+              "rounded-full px-3 py-1 text-xs font-semibold transition-colors border " +
+              (active
+                ? "bg-accent text-[hsl(var(--accent-fg))] border-accent"
+                : "bg-surface2/40 text-muted border-border hover:text-text hover:border-accent/50")
+            }>
+      {label}
+    </button>
+  );
+}
+
 
 function NewRepProjectButton({ onClick }: { onClick: () => void }) {
   const { user } = useAuth();
