@@ -1143,28 +1143,46 @@ function ProjectAdminActions({ p, onChanged }: {
     catch (e: any) { alert(String(e.message || e)); }
     setBusy(false);
   }
-  if (editing) {
-    return (
-      <div className="absolute right-1.5 top-1.5 z-10 flex flex-col gap-1 rounded-lg border border-accent/50 bg-surface p-2 shadow-lg w-72" onClick={(e) => e.stopPropagation()}>
-        <label className="text-[10px] uppercase tracking-widest text-muted">Loyiha nomi</label>
-        <Input value={name} onChange={e => setName(e.target.value)} placeholder="Loyiha nomi" />
-        <label className="text-[10px] uppercase tracking-widest text-muted mt-1">Mahsulot</label>
-        <Input value={productName} onChange={e => setProductName(e.target.value)} placeholder="Mahsulot nomi" />
-        <label className="text-[10px] uppercase tracking-widest text-muted mt-1">Seriya</label>
-        <Input value={series} onChange={e => setSeries(e.target.value)} placeholder="Seriya" />
-        <div className="flex gap-1 justify-end mt-1">
-          <Button variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); setEditing(false); setName(p.name); setProductName(p.product_name); setSeries(p.series || ""); }}>
-            <X className="size-3" />
-          </Button>
-          <Button variant="primary" size="sm" onClick={(e) => { e.stopPropagation(); save(); }} disabled={busy || !name.trim() || !productName.trim()}>
-            <Check className="size-3" />
-          </Button>
-        </div>
-      </div>
-    );
-  }
   return (
     <>
+      {editing && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
+          onClick={(e) => { e.stopPropagation(); setEditing(false); setName(p.name); setProductName(p.product_name); setSeries(p.series || ""); }}
+        >
+          <div
+            className="w-full max-w-sm rounded-xl border border-border bg-surface p-5 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4">
+              <div className="text-lg font-bold">Loyihani tahrirlash</div>
+              <div className="text-xs text-muted mt-0.5">Loyiha nomi, mahsulot va seriyani o'zgartirish</div>
+            </div>
+            <div className="flex flex-col gap-3">
+              <label className="flex flex-col gap-1">
+                <span className="text-[10px] uppercase tracking-widest text-muted">Loyiha nomi</span>
+                <Input value={name} onChange={e => setName(e.target.value)} placeholder="Loyiha nomi" />
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className="text-[10px] uppercase tracking-widest text-muted">Mahsulot</span>
+                <Input value={productName} onChange={e => setProductName(e.target.value)} placeholder="Mahsulot nomi" />
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className="text-[10px] uppercase tracking-widest text-muted">Seriya</span>
+                <Input value={series} onChange={e => setSeries(e.target.value)} placeholder="Seriya" />
+              </label>
+            </div>
+            <div className="mt-5 flex gap-2 justify-end">
+              <Button variant="outline" onClick={(e) => { e.stopPropagation(); setEditing(false); setName(p.name); setProductName(p.product_name); setSeries(p.series || ""); }}>
+                <X className="size-3.5" /> Bekor
+              </Button>
+              <Button variant="primary" onClick={(e) => { e.stopPropagation(); save(); }} disabled={busy || !name.trim() || !productName.trim()}>
+                <Check className="size-3.5" /> {busy ? "Saqlanmoqda…" : "Saqlash"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
       <button onClick={(e) => { e.stopPropagation(); setEditing(true); }}
               title="Tahrirlash"
               className="p-1.5 rounded-md bg-surface/80 border border-border hover:border-accent/60 hover:text-accent">
