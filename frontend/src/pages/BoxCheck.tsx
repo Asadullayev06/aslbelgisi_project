@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowLeft, AlertTriangle, X, Package, ScanBarcode, CheckCircle2,
-  Trash2, Lock, Unlock, ClipboardList,
+  Trash2, Lock, Unlock, ClipboardList, Key, ShieldCheck, ShieldAlert, Check,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHead } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
+import { Input } from "@/components/ui/Input";
 import { Toaster, useFlashes } from "@/components/ui/Toast";
 import { ScanInput, type ScanInputHandle } from "@/components/ScanInput";
+import { CompanyPicker } from "@/components/CompanyPicker";
 import { api } from "@/api";
 import { useAuth, isAdmin } from "@/auth";
 import type {
@@ -52,6 +54,7 @@ export function BoxCheck({ projectId, onExit }: Props) {
   const [ssccInput, setSsccInput] = useState("");
   const [openingBox, setOpeningBox] = useState(false);
   const [openBoxErr, setOpenBoxErr] = useState<string | null>(null);
+  const [credsOpen, setCredsOpen] = useState(false);
   const scannerRef = useRef<ScanInputHandle>(null);
 
   const queueRef = useRef<QItem[]>([]);
@@ -320,8 +323,25 @@ export function BoxCheck({ projectId, onExit }: Props) {
               {project.product_name} · seriya {project.series || "—"} · INN {project.asl_check_inn}
             </div>
           </div>
-          <Badge tone="accent">Quti tekshiruvi</Badge>
+          <div className="flex items-center gap-2">
+            {admin && (
+              <Button variant="outline" size="sm" onClick={() => setCredsOpen(true)}>
+                <Key className="size-3" /> API kalitni yangilash
+              </Button>
+            )}
+            <Badge tone="accent">Quti tekshiruvi</Badge>
+          </div>
         </div>
+
+        {credsOpen && (
+          <UpdateCredsModal
+            projectId={projectId}
+            currentInn={project.asl_check_inn}
+            onClose={() => setCredsOpen(false)}
+            onSaved={() => { setCredsOpen(false); loadProject();
+                             push("hit", "API kalit yangilandi"); }}
+          />
+        )}
 
         <Card className="mb-4">
           <CardHead title="Yangi qutini skanerlash"
@@ -639,6 +659,131 @@ function Metric({ label, value, tone }: {
     <div className="rounded-lg border border-border bg-surface2/40 p-3">
       <div className={"text-3xl font-extrabold " + cls}>{value}</div>
       <div className="text-[11px] uppercase tracking-wide text-muted mt-0.5">{label}</div>
+    </div>
+  );
+}
+
+
+/** Admin modal — rotate the series' ASL credentials. Same verify step as
+ *  the setup form so a bad pair is caught before it hits the scan path. */
+function UpdateCredsModal({ projectId, currentInn, onClose, onSaved }: {
+  projectId: number; currentInn: string;
+  onClose: () => void; onSaved: () => void;
+}) {
+  const [inn, setInn] = useState(currentInn || "");
+  const [apiKey, setApiKey] = useState("");
+  type Verify =
+    | { kind: "idle" }
+    | { kind: "checking" }
+    | { kind: "ok"; expiresOn?: string }
+    | { kind: "bad"; reason: string };
+  const [verify, setVerify] = useState<Verify>({ kind: "idle" });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => { setVerify({ kind: "idle" }); }, [inn, apiKey]);
+
+  async function verifyCreds() {
+    if (!inn.trim() || !apiKey.trim()) {
+      setVerify({ kind: "bad", reason: "INN va API kalitni to'ldiring" }); return;
+    }
+    setVerify({ kind: "checking" });
+    try {
+      const r = await api.stockVerify(inn.trim(), apiKey.trim());
+      if (!r.ok) { setVerify({ kind: "bad", reason: r.error || "kalit qabul qilinmadi" }); return; }
+      if (r.tin_correct === false) {
+        setVerify({ kind: "bad", reason: "API kalit bu INN ga tegishli emas" }); return;
+      }
+      setVerify({ kind: "ok", expiresOn: r.expires_on });
+    } catch (e: any) {
+      setVerify({ kind: "bad", reason: String(e.message || e) });
+    }
+  }
+
+  async function save() {
+    if (!inn.trim() || !apiKey.trim()) { setErr("INN va API kalitni to'ldiring"); return; }
+    setBusy(true); setErr(null);
+    try {
+      await api.boxCheckUpdateCredentials(projectId, {
+        inn: inn.trim(), api_key: apiKey.trim(),
+      });
+      onSaved();
+    } catch (e: any) {
+      setErr(String(e.message || e));
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
+         onClick={onClose}>
+      <div className="w-full max-w-lg rounded-xl border border-border bg-surface p-5 shadow-2xl"
+           onClick={(e) => e.stopPropagation()}>
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div>
+            <div className="text-lg font-bold">API kalitni yangilash</div>
+            <div className="text-xs text-muted mt-0.5">
+              Ushbu seriya uchun ASL kalitini almashtirish. Yangi juftlik saqlashdan
+              oldin ASL da tekshiriladi.
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded text-muted hover:text-text hover:bg-surface2">
+            <X className="size-4" />
+          </button>
+        </div>
+
+        <CompanyPicker
+          onPick={(pickedInn, pickedKey) => { setInn(pickedInn); setApiKey(pickedKey); }}
+          currentInn={inn} currentKey={apiKey}
+        />
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] uppercase tracking-widest text-muted">INN</span>
+            <Input value={inn} onChange={e => setInn(e.target.value)} placeholder="STIR / INN" />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] uppercase tracking-widest text-muted">Yangi API kalit</span>
+            <Input value={apiKey} onChange={e => setApiKey(e.target.value)}
+                   placeholder="Business User API key" />
+          </label>
+        </div>
+
+        <div className="mt-3 flex items-center gap-3 flex-wrap">
+          <Button variant="outline" size="sm" onClick={verifyCreds}
+                  disabled={verify.kind === "checking" || !inn.trim() || !apiKey.trim()}>
+            <ShieldCheck className="size-3" />
+            {verify.kind === "checking" ? "Tekshirilmoqda…" : "INN va kalitni tekshirish"}
+          </Button>
+          {verify.kind === "ok" && (
+            <div className="inline-flex items-center gap-1.5 text-sm text-success">
+              <ShieldCheck className="size-4" />
+              <span>Tasdiqlandi{verify.expiresOn ? ` · kalit ${verify.expiresOn} gacha` : ""}</span>
+            </div>
+          )}
+          {verify.kind === "bad" && (
+            <div className="inline-flex items-center gap-1.5 text-sm text-danger">
+              <ShieldAlert className="size-4" />
+              <span>{verify.reason}</span>
+            </div>
+          )}
+        </div>
+
+        {err && (
+          <div className="mt-3 rounded-lg border border-danger/40 bg-danger/10 p-3 text-sm text-danger">
+            {err}
+          </div>
+        )}
+
+        <div className="mt-5 flex gap-2 justify-end">
+          <Button variant="outline" onClick={onClose} disabled={busy}>
+            <X className="size-3.5" /> Bekor
+          </Button>
+          <Button variant="primary" onClick={save}
+                  disabled={busy || !inn.trim() || !apiKey.trim()}>
+            <Check className="size-3.5" /> {busy ? "Saqlanmoqda…" : "Saqlash"}
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

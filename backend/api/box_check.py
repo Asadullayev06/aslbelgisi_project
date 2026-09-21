@@ -44,6 +44,11 @@ class BoxCheckProjectCreate(BaseModel):
     api_key: str = Field(min_length=1)
 
 
+class BoxCheckCredsPatch(BaseModel):
+    inn: str = Field(min_length=1)
+    api_key: str = Field(min_length=1)
+
+
 class BoxCheckProjectOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
@@ -222,6 +227,28 @@ def create_project(body: BoxCheckProjectCreate,
         created_by=u.id,
     )
     sess.add(p)
+    sess.flush()
+    return BoxCheckProjectOut.model_validate(p)
+
+
+@router.patch("/projects/{project_id}/credentials", response_model=BoxCheckProjectOut)
+def update_credentials(project_id: int, body: BoxCheckCredsPatch,
+                       sess: Session = Depends(get_session),
+                       _u: User = Depends(require_admin)):
+    """Rotate this series' ASL credentials. Verified against ASL first, same
+    as the create step — so a wrong pair fails fast instead of at the next
+    SSCC scan."""
+    p = _load_project(sess, project_id)
+    inn     = body.inn.strip()
+    api_key = body.api_key.strip()
+    v = asl_stock.verify_api_key_ownership(inn, api_key)
+    if not v.get("success"):
+        raise HTTPException(400, f"ASL API kalitni tekshirib bo'lmadi: {v.get('error','')}")
+    data = v.get("data") or {}
+    if isinstance(data, dict) and data.get("isTinCorrect") is False:
+        raise HTTPException(400, "API kalit ushbu INN ga tegishli emas")
+    p.asl_check_inn = inn
+    p.asl_check_api_key = api_key
     sess.flush()
     return BoxCheckProjectOut.model_validate(p)
 

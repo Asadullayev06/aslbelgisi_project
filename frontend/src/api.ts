@@ -352,6 +352,10 @@ export const api = {
   /** Load the project + all audits under it. */
   boxCheckGetProject: (projectId: number) =>
     req<BoxCheckProjectState>(`/api/box-check/projects/${projectId}`),
+  /** Admin only — rotate the project's ASL credentials (verified server-side). */
+  boxCheckUpdateCredentials: (projectId: number, body: { inn: string; api_key: string }) =>
+    req<BoxCheckProjectSummary>(`/api/box-check/projects/${projectId}/credentials`,
+      { method: "PATCH", body: JSON.stringify(body) }),
   /** Open a new box audit under a project — scans the SSCC, ASL returns children. */
   boxCheckStart: (projectId: number, sscc: string) =>
     req<BoxCheckState>(`/api/box-check/projects/${projectId}/scan-box`,
