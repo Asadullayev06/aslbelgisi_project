@@ -99,10 +99,8 @@ export function AppShell({ activeKey, title, onNavigate, children }: Props) {
         {/* brand */}
         <button onClick={() => onNavigate("home")}
                 className="flex h-[76px] items-center gap-3 border-b border-border px-5 text-left">
-          <div className="relative grid size-[38px] place-items-center rounded-[11px] bg-accent text-[hsl(var(--accent-fg))]">
-            <Package className="size-[21px]" />
-            <span className="absolute -right-1 -top-1 size-[11px] rounded-full border-2 border-surface bg-brand2" />
-          </div>
+          <img src="/logo.webp" alt="Asl Belgisi" width={40} height={40}
+               className="size-[40px] rounded-[11px] object-contain bg-white shadow-sm" />
           <div>
             <div className="text-[15px] font-extrabold tracking-tight">Asl Belgisi</div>
             <div className="text-[11px] text-muted">Ish maydoni</div>

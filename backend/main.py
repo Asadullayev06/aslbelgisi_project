@@ -69,6 +69,18 @@ if _FRONTEND_DIST.is_dir():
         # Never intercept the API namespace.
         if full_path.startswith("api/") or full_path == "health":
             return JSONResponse({"detail": "not found"}, status_code=404)
+        # Serve a real static file living at the dist root (favicon, logo,
+        # robots.txt, …) before falling back to the SPA shell. Guard against
+        # path traversal by keeping the resolved path inside dist.
+        if full_path:
+            root = _FRONTEND_DIST.resolve()
+            candidate = (root / full_path).resolve()
+            try:
+                candidate.relative_to(root)
+                if candidate.is_file():
+                    return FileResponse(candidate)
+            except (ValueError, OSError):
+                pass
         index = _FRONTEND_DIST / "index.html"
         if not index.is_file():
             return JSONResponse({"detail": "frontend not built"}, status_code=503)

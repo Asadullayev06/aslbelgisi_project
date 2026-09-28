@@ -967,9 +967,13 @@ function Home({ onAggregation, onStock, onInspector, onCustom, onSearch, onSscc,
   return (
     <div className="mx-auto max-w-6xl px-6 py-10">
       <TopBar />
-      <div className="mb-8">
-        <div className="text-3xl font-extrabold tracking-tight text-accent">Asl Belgisi Ish maydoni</div>
-        <div className="text-muted text-sm mt-1">Vositalar</div>
+      <div className="mb-8 flex items-center gap-3">
+        <img src="/logo.webp" alt="Asl Belgisi" width={48} height={48}
+             className="size-12 rounded-xl object-contain bg-white shadow-sm shrink-0" />
+        <div>
+          <div className="text-3xl font-extrabold tracking-tight text-accent">Asl Belgisi Ish maydoni</div>
+          <div className="text-muted text-sm mt-1">Vositalar</div>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
