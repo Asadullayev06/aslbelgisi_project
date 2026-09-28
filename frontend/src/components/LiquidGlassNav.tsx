@@ -213,6 +213,28 @@ function LensFilter() {
           <feBlend in="cR" in2="cG" mode="screen" result="rg" />
           <feBlend in="rg" in2="cB" mode="screen" />
         </filter>
+
+        {/* Gentler variant for light mode — dark text on a light frosted
+            fill makes chromatic fringing obvious, so barely displace. */}
+        <filter id="asl-lens-soft" x="-40%" y="-40%" width="180%" height="180%"
+                colorInterpolationFilters="sRGB">
+          <feImage href={MAP_URI} x="0" y="0" width="100%" height="100%"
+                   preserveAspectRatio="none" result="map" />
+          <feDisplacementMap in="SourceGraphic" in2="map" scale="6"
+                             xChannelSelector="R" yChannelSelector="G" result="dR" />
+          <feColorMatrix in="dR" type="matrix"
+            values="1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0" result="cR" />
+          <feDisplacementMap in="SourceGraphic" in2="map" scale="5"
+                             xChannelSelector="R" yChannelSelector="G" result="dG" />
+          <feColorMatrix in="dG" type="matrix"
+            values="0 0 0 0 0  0 1 0 0 0  0 0 0 0 0  0 0 0 1 0" result="cG" />
+          <feDisplacementMap in="SourceGraphic" in2="map" scale="4"
+                             xChannelSelector="R" yChannelSelector="G" result="dB" />
+          <feColorMatrix in="dB" type="matrix"
+            values="0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 1 0" result="cB" />
+          <feBlend in="cR" in2="cG" mode="screen" result="rg" />
+          <feBlend in="rg" in2="cB" mode="screen" />
+        </filter>
       </defs>
     </svg>
   );

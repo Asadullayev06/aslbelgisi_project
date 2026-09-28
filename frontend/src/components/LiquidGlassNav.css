@@ -77,14 +77,22 @@
 }
 .glass-lens.is-pressed::before { opacity: 1; }
 
-/* ── Light theme: softly frosted white glass, darker drop shadow ── */
+/* ── Light theme: clean, near-clear glass (minimal fill, no blur) ── */
 .light .glass-lens {
-  --lens-fill:       linear-gradient(135deg, rgba(255, 255, 255, 0.40), rgba(255, 255, 255, 0.20));
+  --lens-fill:       linear-gradient(135deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0.10));
   --lens-rim-tl:     rgba(255, 255, 255, 0.95);
-  --lens-rim-br:     rgba(90, 110, 95, 0.18);
-  --lens-hi:         rgba(255, 255, 255, 0.75);
+  --lens-rim-br:     rgba(90, 110, 95, 0.20);
+  --lens-hi:         rgba(255, 255, 255, 0.55);
   --lens-inset-dark: rgba(40, 60, 45, 0.10);
-  --lens-shadow:     rgba(30, 55, 42, 0.26);
+  --lens-shadow:     rgba(30, 55, 42, 0.24);
+}
+.light .glass-lens {
+  /* Fallback: crisp — almost no blur, so the label stays sharp. */
+  backdrop-filter: blur(0.5px) saturate(135%) brightness(1.02);
+  -webkit-backdrop-filter: blur(0.5px) saturate(135%) brightness(1.02);
+}
+.light .glass-lens.lensing {
+  backdrop-filter: url(#asl-lens-soft) saturate(130%) brightness(1.02);
 }
 
 /* ── Dark theme: faint luminous glass (keeps the label readable) ── */
