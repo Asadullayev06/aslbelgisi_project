@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   Package, ClipboardList, Layers, Boxes, ScanBarcode, ScanLine, Search,
   Barcode, Printer, Settings, LogOut, Sun, Moon, LayoutDashboard, Shield, HardHat,
 } from "lucide-react";
 import { useAuth, isAdmin } from "@/auth";
 import { DesignSwitch } from "@/design";
+import { GlassLens } from "@/components/LiquidGlassNav";
 import { cn } from "@/lib/utils";
 
 export type NavDest =
@@ -57,13 +58,14 @@ export function AppShell({ activeKey, title, onNavigate, children }: Props) {
   const { user, logout } = useAuth();
   const admin = isAdmin(user);
   const { theme, toggle } = useThemeToggle();
+  const navRef = useRef<HTMLElement>(null);
 
   const renderSection = (label: string, items: NavItem[]) => {
     const visible = items.filter(i => !i.adminOnly || admin);
     if (visible.length === 0) return null;
     return (
       <div className="flex flex-col gap-1">
-        <div className="px-3 pt-4 pb-1 text-[10.5px] font-bold tracking-[1px] text-muted/70">
+        <div className="relative z-[1] px-3 pt-4 pb-1 text-[10.5px] font-bold tracking-[1px] text-muted/70">
           {label}
         </div>
         {visible.map(item => {
@@ -72,11 +74,13 @@ export function AppShell({ activeKey, title, onNavigate, children }: Props) {
             <button
               key={item.key}
               onClick={() => onNavigate(item.key)}
+              data-nav-item
+              data-active={active ? "true" : undefined}
               className={cn(
-                "flex items-center gap-3 rounded-[9px] px-3 py-2.5 text-left text-sm transition-colors",
+                "relative z-[1] flex items-center gap-3 rounded-[9px] px-3 py-2.5 text-left text-sm transition-colors duration-300",
                 active
-                  ? "bg-accent/12 font-semibold text-accent"
-                  : "text-text/80 hover:bg-surface2",
+                  ? "font-semibold text-accent"
+                  : "text-text/80 hover:text-text",
               )}
             >
               {item.icon}
@@ -106,22 +110,27 @@ export function AppShell({ activeKey, title, onNavigate, children }: Props) {
         </button>
 
         {/* nav */}
-        <nav className="flex flex-1 flex-col gap-1 overflow-auto px-3 py-3">
-          <button
-            onClick={() => onNavigate("home")}
-            className={cn(
-              "flex items-center gap-3 rounded-[9px] px-3 py-2.5 text-left text-sm transition-colors",
-              activeKey === "home"
-                ? "bg-accent/12 font-semibold text-accent"
-                : "text-text/80 hover:bg-surface2",
-            )}
-          >
-            <LayoutDashboard className="size-[18px]" />
-            <span>Boshqaruv paneli</span>
-          </button>
-          {renderSection("ASOSIY", MAIN)}
-          {renderSection("VOSITALAR", TOOLS)}
-          {renderSection("TIZIM", SYSTEM)}
+        <nav ref={navRef} className="relative flex flex-1 flex-col overflow-auto px-3 py-3">
+          <div className="relative flex flex-col gap-1">
+            <GlassLens navRef={navRef} dep={`${activeKey}:${admin}`} />
+            <button
+              onClick={() => onNavigate("home")}
+              data-nav-item
+              data-active={activeKey === "home" ? "true" : undefined}
+              className={cn(
+                "relative z-[1] flex items-center gap-3 rounded-[9px] px-3 py-2.5 text-left text-sm transition-colors duration-300",
+                activeKey === "home"
+                  ? "font-semibold text-accent"
+                  : "text-text/80 hover:text-text",
+              )}
+            >
+              <LayoutDashboard className="size-[18px]" />
+              <span>Boshqaruv paneli</span>
+            </button>
+            {renderSection("ASOSIY", MAIN)}
+            {renderSection("VOSITALAR", TOOLS)}
+            {renderSection("TIZIM", SYSTEM)}
+          </div>
         </nav>
 
         {/* user */}
