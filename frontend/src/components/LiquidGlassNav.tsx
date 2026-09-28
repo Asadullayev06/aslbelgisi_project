@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import "./LiquidGlassNav.css";
 
 /** Chromium is the only engine that runs url() filters inside
@@ -50,7 +50,9 @@ export function GlassLens({ navRef, dep }: {
   const lensRef = useRef<HTMLDivElement>(null);
   const apiRef = useRef<{ retarget: () => void } | null>(null);
 
-  useLayoutEffect(() => {
+  // NOTE: useEffect (not useLayoutEffect) so the parent <nav> ref is already
+  // attached — a child's layout effect runs before the parent's ref is set.
+  useEffect(() => {
     const nav = navRef.current;
     const lens = lensRef.current;
     if (!nav || !lens) return;
