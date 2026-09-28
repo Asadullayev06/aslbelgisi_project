@@ -17,7 +17,7 @@
   left: 0;
   width: 0;
   height: 0;
-  border-radius: 999px;
+  border-radius: 14px;
   opacity: 0;
   pointer-events: none;
   z-index: 20;                       /* ABOVE the items so it refracts them */
@@ -26,19 +26,19 @@
 
   background: var(--lens-fill);
   box-shadow:
-    inset 0 1px 1.5px var(--lens-hi),
-    inset 0 -1.5px 2px var(--lens-inset-dark),
-    0 8px 22px -8px var(--lens-shadow);
+    inset 0 1px 1px var(--lens-hi),
+    inset 0 -1px 1.5px var(--lens-inset-dark),
+    0 6px 16px -8px var(--lens-shadow);
 
-  /* Fallback material (Safari/Firefox): a clearly frosted pill. */
-  backdrop-filter: blur(6px) saturate(170%) brightness(1.06);
-  -webkit-backdrop-filter: blur(6px) saturate(170%) brightness(1.06);
+  /* Fallback material (Safari/Firefox): a lightly frosted pane. */
+  backdrop-filter: blur(3px) saturate(155%) brightness(1.04);
+  -webkit-backdrop-filter: blur(3px) saturate(155%) brightness(1.04);
   transition: box-shadow 200ms ease, opacity 220ms ease;
 }
 
-/* Chromium: real lensing — displacement + chromatic split over frosted glass. */
+/* Chromium: real lensing — gentle displacement + faint chromatic edge. */
 .glass-lens.lensing {
-  backdrop-filter: url(#asl-lens) blur(1px) saturate(170%) brightness(1.06);
+  backdrop-filter: url(#asl-lens) blur(0.3px) saturate(150%) brightness(1.04);
 }
 
 /* Soft top-left specular highlight. */
@@ -49,7 +49,7 @@
   border-radius: inherit;
   pointer-events: none;
   background: radial-gradient(125% 90% at 24% 16%, var(--lens-hi), transparent 55%);
-  opacity: 0.75;
+  opacity: 0.55;
   transition: opacity 160ms ease;
 }
 
@@ -77,24 +77,24 @@
 }
 .glass-lens.is-pressed::before { opacity: 1; }
 
-/* ── Light theme: clearly frosted white glass, darker drop shadow ── */
+/* ── Light theme: softly frosted white glass, darker drop shadow ── */
 .light .glass-lens {
-  --lens-fill:       linear-gradient(135deg, rgba(255, 255, 255, 0.60), rgba(255, 255, 255, 0.34));
-  --lens-rim-tl:     rgba(255, 255, 255, 1);
-  --lens-rim-br:     rgba(90, 110, 95, 0.22);
-  --lens-hi:         rgba(255, 255, 255, 0.90);
-  --lens-inset-dark: rgba(40, 60, 45, 0.14);
-  --lens-shadow:     rgba(30, 55, 42, 0.32);
+  --lens-fill:       linear-gradient(135deg, rgba(255, 255, 255, 0.40), rgba(255, 255, 255, 0.20));
+  --lens-rim-tl:     rgba(255, 255, 255, 0.95);
+  --lens-rim-br:     rgba(90, 110, 95, 0.18);
+  --lens-hi:         rgba(255, 255, 255, 0.75);
+  --lens-inset-dark: rgba(40, 60, 45, 0.10);
+  --lens-shadow:     rgba(30, 55, 42, 0.26);
 }
 
-/* ── Dark theme: luminous glass ── */
+/* ── Dark theme: faint luminous glass (keeps the label readable) ── */
 .dark .glass-lens {
-  --lens-fill:       linear-gradient(135deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.07));
-  --lens-rim-tl:     rgba(255, 255, 255, 0.72);
-  --lens-rim-br:     rgba(255, 255, 255, 0.06);
-  --lens-hi:         rgba(255, 255, 255, 0.40);
-  --lens-inset-dark: rgba(0, 0, 0, 0.42);
-  --lens-shadow:     rgba(0, 0, 0, 0.55);
+  --lens-fill:       linear-gradient(135deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.04));
+  --lens-rim-tl:     rgba(255, 255, 255, 0.55);
+  --lens-rim-br:     rgba(255, 255, 255, 0.05);
+  --lens-hi:         rgba(255, 255, 255, 0.28);
+  --lens-inset-dark: rgba(0, 0, 0, 0.35);
+  --lens-shadow:     rgba(0, 0, 0, 0.48);
 }
 
 /* Reduced motion: no stretch/spring (JS snaps); gentle fade only. */

@@ -60,7 +60,7 @@ export function GlassLens({ navRef, dep }: {
     const reduced = reducedMotion();
     lens.classList.toggle("lensing", supportsUrlBackdrop());
 
-    const PADX = 6, PADY = 4;
+    const PADX = 5, PADY = 3;
     const measure = (el: HTMLElement): Box => ({
       cx: el.offsetLeft + el.offsetWidth / 2,
       cy: el.offsetTop + el.offsetHeight / 2,
@@ -195,18 +195,18 @@ function LensFilter() {
                 colorInterpolationFilters="sRGB">
           <feImage href={MAP_URI} x="0" y="0" width="100%" height="100%"
                    preserveAspectRatio="none" result="map" />
-          {/* Red channel — largest displacement. */}
-          <feDisplacementMap in="SourceGraphic" in2="map" scale="34"
+          {/* Red channel — largest displacement (kept subtle & readable). */}
+          <feDisplacementMap in="SourceGraphic" in2="map" scale="11"
                              xChannelSelector="R" yChannelSelector="G" result="dR" />
           <feColorMatrix in="dR" type="matrix"
             values="1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0" result="cR" />
           {/* Green channel — medium. */}
-          <feDisplacementMap in="SourceGraphic" in2="map" scale="28"
+          <feDisplacementMap in="SourceGraphic" in2="map" scale="9"
                              xChannelSelector="R" yChannelSelector="G" result="dG" />
           <feColorMatrix in="dG" type="matrix"
             values="0 0 0 0 0  0 1 0 0 0  0 0 0 0 0  0 0 0 1 0" result="cG" />
           {/* Blue channel — smallest. */}
-          <feDisplacementMap in="SourceGraphic" in2="map" scale="22"
+          <feDisplacementMap in="SourceGraphic" in2="map" scale="7"
                              xChannelSelector="R" yChannelSelector="G" result="dB" />
           <feColorMatrix in="dB" type="matrix"
             values="0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 1 0" result="cB" />
