@@ -3,11 +3,11 @@
 .tp-water::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: radial-gradient(ellipse 480px 360px at var(--water-x, 50%) var(--water-y, 50%), rgb(255 255 255 / var(--water-light, 0)), transparent 75%); }
 .tp-water-lens { position: absolute; left: 0; top: 0; width: 420px; height: 420px; opacity: 0; pointer-events: none; will-change: transform, opacity;
   /* Open, feathered reflections: no enclosing rim or separate glass bubble. */
-  background: radial-gradient(ellipse 50% 15% at 43% 42%, rgb(255 255 255 / var(--water-sheen, 0)), transparent 100%);
+  background: radial-gradient(ellipse 50% 15% at 43% 42%, rgb(255 255 255 / var(--water-sheen, 0)), transparent 100%), radial-gradient(ellipse 44% 12% at 55% 57%, rgb(23 78 60 / calc(var(--water-sheen, 0) * .25)), transparent 100%);
 }
 .tp-water-lens.has-refraction { backdrop-filter: var(--water-filter); }
 .tp-water-ring { position: absolute; width: 250px; height: 250px; opacity: 0; pointer-events: none;
-  background: radial-gradient(ellipse 44% 12% at 42% 44%, #ffffff20, transparent 100%);
+  background: radial-gradient(ellipse 44% 12% at 42% 44%, #ffffff2a, transparent 100%);
 }
 .tp-water-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
 @media (prefers-reduced-motion: reduce), (hover: none), (pointer: coarse) { .tp-water { display: none; } }

@@ -74,7 +74,7 @@ export function LoginLiquidGlass({ pageRef }: { pageRef: RefObject<HTMLDivElemen
       // Fade displacement itself: blending a displaced copy over the original
       // with opacity/masking produces doubled glyphs rather than clear refraction.
       lens.style.opacity = "1";
-      lens.style.setProperty("--water-sheen", String(alpha * .045));
+      lens.style.setProperty("--water-sheen", String(alpha * .075));
       displacementRef.current?.setAttribute("scale", String(editing ? 0 : alpha * (3 + speed * 3)));
       overlay.style.opacity = "1";
       overlay.style.setProperty("--water-x", x + "px");
