@@ -73,11 +73,11 @@ export function LoginLiquidGlass({ pageRef }: { pageRef: RefObject<HTMLDivElemen
       const angle = Math.atan2(vy, vx);
       lens.style.transform = "translate3d(" + (x - 210) + "px," + (y - 210) + "px,0) rotate(" + angle + "rad) scale(" + (1 + speed * .14) + "," + (1 - speed * .07) + ")";
       lens.style.opacity = String(alpha);
-      displacementRef.current?.setAttribute("scale", String(editing ? 0 : 10 + speed * 12));
+      displacementRef.current?.setAttribute("scale", String(editing ? 0 : 14 + speed * 14));
       overlay.style.opacity = "1";
       overlay.style.setProperty("--water-x", x + "px");
       overlay.style.setProperty("--water-y", y + "px");
-      overlay.style.setProperty("--water-light", String(alpha * .23));
+      overlay.style.setProperty("--water-light", String(alpha * .12));
       if (freshness > 0 || alpha > .002 || Math.hypot(tx - x, ty - y) > .1) frame = requestAnimationFrame(draw);
       else { lens.style.opacity = "0"; overlay.style.setProperty("--water-light", "0"); }
     };
