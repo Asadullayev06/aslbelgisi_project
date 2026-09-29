@@ -12,8 +12,8 @@ function waterMap() {
     const dx = (x - 95.5) / 96, dy = (y - 95.5) / 96;
     const envelope = Math.pow(Math.max(0, 1 - dx * dx), 3)
       * Math.pow(Math.max(0, 1 - dy * dy), 3);
-    const flowX = Math.sin(dy * 8 + Math.sin(dx * 4) * 1.4);
-    const flowY = Math.sin(dx * 7 - Math.sin(dy * 5) * 1.2);
+    const flowX = Math.sin(dy * 3 + Math.sin(dx * 2) * .6);
+    const flowY = Math.sin(dx * 3 - Math.sin(dy * 2) * .6);
     const index = (y * 192 + x) * 4;
     data.data[index] = Math.round(128 + flowX * envelope * 100);
     data.data[index + 1] = Math.round(128 + flowY * envelope * 100);
@@ -70,14 +70,16 @@ export function LoginLiquidGlass({ pageRef }: { pageRef: RefObject<HTMLDivElemen
       const freshness = inside ? Math.max(0, 1 - (now - lastMove) / 1400) : 0;
       const targetAlpha = freshness * (editing ? .14 : .85);
       alpha += (targetAlpha - alpha) * (1 - Math.exp(-dt * 9));
-      const angle = Math.atan2(vy, vx);
-      lens.style.transform = "translate3d(" + (x - 210) + "px," + (y - 210) + "px,0) rotate(" + angle + "rad) scale(" + (1 + speed * .14) + "," + (1 - speed * .07) + ")";
-      lens.style.opacity = String(alpha);
-      displacementRef.current?.setAttribute("scale", String(editing ? 0 : 14 + speed * 14));
+      lens.style.transform = "translate3d(" + (x - 210) + "px," + (y - 210) + "px,0) scale(" + (1 + speed * .04) + "," + (1 - speed * .02) + ")";
+      // Fade displacement itself: blending a displaced copy over the original
+      // with opacity/masking produces doubled glyphs rather than clear refraction.
+      lens.style.opacity = "1";
+      lens.style.setProperty("--water-sheen", String(alpha * .045));
+      displacementRef.current?.setAttribute("scale", String(editing ? 0 : alpha * (3 + speed * 3)));
       overlay.style.opacity = "1";
       overlay.style.setProperty("--water-x", x + "px");
       overlay.style.setProperty("--water-y", y + "px");
-      overlay.style.setProperty("--water-light", String(alpha * .12));
+      overlay.style.setProperty("--water-light", String(alpha * .025));
       if (freshness > 0 || alpha > .002 || Math.hypot(tx - x, ty - y) > .1) frame = requestAnimationFrame(draw);
       else { lens.style.opacity = "0"; overlay.style.setProperty("--water-light", "0"); }
     };
@@ -132,7 +134,7 @@ export function LoginLiquidGlass({ pageRef }: { pageRef: RefObject<HTMLDivElemen
     <svg className="tp-water-defs" focusable="false"><defs>
       <filter id={id} x="0" y="0" width="420" height="420" filterUnits="userSpaceOnUse" primitiveUnits="userSpaceOnUse" colorInterpolationFilters="sRGB">
         <feImage ref={imageRef} x="0" y="0" width="420" height="420" preserveAspectRatio="none" result="water-map" />
-        <feDisplacementMap ref={displacementRef} in="SourceGraphic" in2="water-map" scale="12" xChannelSelector="R" yChannelSelector="G" />
+        <feDisplacementMap ref={displacementRef} in="SourceGraphic" in2="water-map" scale="0" xChannelSelector="R" yChannelSelector="G" />
       </filter>
     </defs></svg>
     <div ref={lensRef} className="tp-water-lens" />
