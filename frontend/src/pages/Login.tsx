@@ -1,6 +1,7 @@
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Package, ClipboardList, Layers, Boxes, ShieldCheck, User, LockKeyhole, Eye, EyeOff, ArrowRight, Globe, Landmark, Check, ChevronDown } from "lucide-react";
 import { useAuth } from "@/auth";
+import { LoginLiquidGlass } from "@/components/LoginLiquidGlass";
 import "./login.css";
 
 const REMEMBER_KEY = "tp.login.remember";
@@ -8,6 +9,7 @@ function Brand() {
   return <div className="tp-brand"><span className="tp-logo" aria-hidden="true"><img src="/login-reference.png" alt="" /></span><span className="tp-word">Trace<span>Pro</span></span></div>;
 }
 export function Login() {
+  const pageRef = useRef<HTMLDivElement>(null);
   const { login } = useAuth();
   const [username, setUsername] = useState(() => { try { return localStorage.getItem(REMEMBER_KEY) || ""; } catch { return ""; } });
   const [password, setPassword] = useState("");
@@ -25,7 +27,7 @@ export function Login() {
       try { if (remember) localStorage.setItem(REMEMBER_KEY, username.trim()); else localStorage.removeItem(REMEMBER_KEY); } catch { /* Storage may be unavailable. */ }
     } catch (e: unknown) { setErr(e instanceof Error ? e.message : String(e)); setBusy(false); }
   }
-  return <div className="tp-login">
+  return <div className="tp-login" ref={pageRef}>
     <div className="tp-stripes" aria-hidden="true" />
     <header className="tp-header"><Brand /></header>
     <div className="tp-lang" aria-label="Til: O'zbekcha"><Globe /><span>O'zbekcha</span><ChevronDown /></div>
@@ -55,6 +57,7 @@ export function Login() {
       </form>
       <div className="tp-secure"><ShieldCheck aria-hidden="true" /><p>Sizning ma’lumotlaringiz himoyalangan<br />va xavfsiz saqlanadi.</p></div>
     </main>
+    <LoginLiquidGlass pageRef={pageRef} />
   </div>;
 }
 function Feature({ icon, title, children }: { icon: ReactNode; title: string; children: ReactNode }) {

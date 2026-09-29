@@ -1,0 +1,16 @@
+/* An opt-in decorative surface for the login only. No layout or hit-testing changes. */
+.tp-water { position: absolute; inset: 0; z-index: 10; pointer-events: none; overflow: hidden; opacity: 0; }
+.tp-water::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: radial-gradient(ellipse 480px 360px at var(--water-x, 50%) var(--water-y, 50%), rgb(255 255 255 / var(--water-light, 0)), transparent 75%); }
+.tp-water-lens { position: absolute; left: 0; top: 0; width: 420px; height: 420px; border-radius: 50%; opacity: 0; pointer-events: none; will-change: transform, opacity;
+  background: radial-gradient(ellipse at 35% 22%, #ffffff20, transparent 44%), radial-gradient(circle, transparent 48%, #d7eee208 61%, #ffffff35 68%, #b1d2c510 71%, transparent 77%);
+  -webkit-backdrop-filter: saturate(108%) brightness(1.015);
+  backdrop-filter: saturate(108%) brightness(1.015);
+  -webkit-mask-image: radial-gradient(circle, #000 50%, transparent 76%);
+  mask-image: radial-gradient(circle, #000 50%, transparent 76%);
+}
+.tp-water-lens.has-refraction { backdrop-filter: var(--water-filter) saturate(108%) brightness(1.015); }
+.tp-water-ring { position: absolute; width: 250px; height: 250px; border-radius: 50%; opacity: 0; pointer-events: none;
+  background: radial-gradient(ellipse at 38% 28%, transparent 62%, #ffffff80 64%, #bed7cb38 65%, transparent 67%);
+}
+.tp-water-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
+@media (prefers-reduced-motion: reduce), (hover: none), (pointer: coarse) { .tp-water { display: none; } }
