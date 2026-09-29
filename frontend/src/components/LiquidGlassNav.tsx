@@ -69,6 +69,10 @@ export function GlassLens({ navRef, dep }: {
     const velocity: State = { x: 0, y: 0, w: 0, h: 0, sx: 0, sy: 0, lift: 0 };
     let hover: HTMLElement | null = null, focus: HTMLElement | null = null;
     let pressed = false, pointerId: number | null = null, frame = 0, last = 0;
+    let pointerInside = false;
+    let pointerY = 0, originTop = 0;
+    let tracks: { item: HTMLElement; geometry: Geometry; top: number; bottom: number }[] = [];
+    const displacement = Array.from(filtersRef.current?.querySelectorAll("feDisplacementMap") ?? []);
     const active = () => nav.querySelector<HTMLElement>('[data-nav-item][data-active="true"]');
     const itemFrom = (node: EventTarget | null) => {
       const item = node instanceof Element ? node.closest<HTMLElement>("[data-nav-item]") : null;
@@ -83,6 +87,13 @@ export function GlassLens({ navRef, dep }: {
         y: bounds.top - (origin?.top ?? 0) - 3,
         w: bounds.width + 10, h: bounds.height + 6,
       };
+    };
+    const refreshTracks = () => {
+      originTop = lens.offsetParent?.getBoundingClientRect().top ?? 0;
+      tracks = Array.from(nav.querySelectorAll<HTMLElement>("[data-nav-item]")).map(item => {
+        const geometry = measure(item);
+        return { item, geometry, top: geometry.y + 3, bottom: geometry.y + geometry.h - 3 };
+      });
     };
     const updateMap = (geometry: Geometry) => {
       if (!refracts) return;
@@ -106,6 +117,11 @@ export function GlassLens({ navRef, dep }: {
       const lift = 1 + current.lift * .045;
       lens.style.transform = "translate3d(" + current.x + "px," + current.y + "px,0) scale(" + current.sx * lift + "," + current.sy * lift + ")";
       lens.style.setProperty("--lens-lift", String(current.lift));
+      // The moving bubble becomes rounder and refracts more, then clears again.
+      const flow = reduced ? 0 : clamp(Math.abs(current.sy - 1) / .19, 0, 1);
+      lens.style.setProperty("--lens-flow", String(flow));
+      lens.style.borderRadius = (14 + flow * 12) + "px";
+      displacement.forEach((filter, index) => filter.setAttribute("scale", String((index ? 4 : 8) + flow * (index ? 10 : 16))));
       lens.style.opacity = "1";
     };
     const stop = () => { cancelAnimationFrame(frame); frame = 0; };
@@ -125,12 +141,12 @@ export function GlassLens({ navRef, dep }: {
       const steps = Math.max(1, Math.ceil(elapsed / (1 / 120)));
       const dt = elapsed / steps;
       for (let step = 0; step < steps; step++) {
-        target.sx = 1 + clamp(Math.abs(velocity.x) * .00010, 0, .05) - clamp(Math.abs(velocity.y) * .00006, 0, .035);
-        target.sy = 1 + clamp(Math.abs(velocity.y) * .00010, 0, .065) - clamp(Math.abs(velocity.x) * .00006, 0, .035);
+        target.sx = 1 + clamp(Math.abs(velocity.x) * .00025, 0, .12) - clamp(Math.abs(velocity.y) * .00015, 0, .08);
+        target.sy = 1 + clamp(Math.abs(velocity.y) * .00035, 0, .24) - clamp(Math.abs(velocity.x) * .00015, 0, .06);
         target.lift = pressed ? 1 : 0;
         for (const key of channels) {
           const shape = key === "sx" || key === "sy" || key === "lift";
-          const stiffness = shape ? 320 : 300, damping = shape ? 30 : 29;
+          const stiffness = shape ? 320 : 300, damping = 27;
           velocity[key] += (stiffness * (target[key] - current[key]) - damping * velocity[key]) * dt;
           current[key] += velocity[key] * dt;
         }
@@ -152,9 +168,7 @@ export function GlassLens({ navRef, dep }: {
       last = performance.now();
       frame = requestAnimationFrame(tick);
     };
-    const aim = (item: HTMLElement | null, immediate = false) => {
-      if (!item) { lens.style.opacity = "0"; stop(); return; }
-      const geometry = measure(item); // Reads only on interaction/resize, never each frame.
+    const aimGeometry = (geometry: Geometry, immediate = false) => {
       updateMap(geometry);
       target = { ...geometry, sx: 1, sy: 1, lift: pressed ? 1 : 0 };
       if (!current || immediate || reduced) {
@@ -163,14 +177,36 @@ export function GlassLens({ navRef, dep }: {
         if (fade) lens.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 140, easing: "ease-out" });
       } else start();
     };
-    const onOver = (event: PointerEvent) => {
-      if (event.pointerType === "touch") return;
-      const item = itemFrom(event.target);
-      if (item === hover) return;
-      hover = item;
-      if (!focus) aim(preferred());
+    const aim = (item: HTMLElement | null, immediate = false) => {
+      // Empty gaps never hide the lens or send it to a different page.
+      if (!item) return;
+      aimGeometry(tracks.find(track => track.item === item)?.geometry ?? measure(item), immediate);
     };
-    const onLeave = () => { hover = null; aim(preferred()); };
+    const followPointer = () => {
+      if (focus || !tracks.length) return;
+      const y = pointerY - originTop;
+      for (let i = 0; i < tracks.length; i++) {
+        const track = tracks[i], next = tracks[i + 1];
+        if (y >= track.top && y <= track.bottom) { hover = track.item; aimGeometry(track.geometry); return; }
+        if (next && y > track.bottom && y < next.top) {
+          const progress = clamp((y - track.bottom) / (next.top - track.bottom), 0, 1);
+          hover = progress < .5 ? track.item : next.item;
+          const geometry = {} as Geometry;
+          for (const key of ["x", "y", "w", "h"] as const) {
+            geometry[key] = track.geometry[key] + (next.geometry[key] - track.geometry[key]) * progress;
+          }
+          // Keep one unbroken lens through the gap, including section separators.
+          aimGeometry(geometry);
+          return;
+        }
+      }
+    };
+    const onMove = (event: PointerEvent) => {
+      if (event.pointerType === "touch") return;
+      pointerInside = true; pointerY = event.clientY;
+      followPointer();
+    };
+    const onLeave = () => { pointerInside = false; hover = null; aim(preferred()); };
     const onFocus = (event: FocusEvent) => {
       const item = itemFrom(event.target);
       // Pointer clicks leave DOM focus behind; only keyboard focus takes priority.
@@ -205,16 +241,21 @@ export function GlassLens({ navRef, dep }: {
     const onKeyUp = (event: KeyboardEvent) => {
       if (event.key === " " || event.key === "Enter") release();
     };
-    const onResize = () => aim(preferred(), true);
+    const onResize = () => {
+      refreshTracks();
+      if (pointerInside && !focus) followPointer(); else aim(preferred(), true);
+    };
     const onMotion = () => {
       reduced = motion.matches;
       if (reduced) snap(); else aim(preferred());
     };
-    const onWindowBlur = () => { hover = null; release(); aim(preferred()); };
+    const onWindowBlur = () => { pointerInside = false; hover = null; release(); aim(preferred()); };
     const observer = new ResizeObserver(onResize);
     observer.observe(nav);
     nav.querySelectorAll<HTMLElement>("[data-nav-item]").forEach(item => observer.observe(item));
-    nav.addEventListener("pointerover", onOver);
+    nav.addEventListener("pointermove", onMove);
+    nav.addEventListener("pointerenter", onMove);
+    nav.addEventListener("scroll", onResize);
     nav.addEventListener("pointerleave", onLeave);
     nav.addEventListener("focusin", onFocus);
     nav.addEventListener("focusout", onBlur);
@@ -227,10 +268,13 @@ export function GlassLens({ navRef, dep }: {
     window.addEventListener("resize", onResize);
     motion.addEventListener("change", onMotion);
     apiRef.current = { retarget: () => aim(focus || active() || hover) };
+    refreshTracks();
     aim(active(), true);
     return () => {
       stop(); observer.disconnect(); apiRef.current = null;
-      nav.removeEventListener("pointerover", onOver);
+      nav.removeEventListener("pointermove", onMove);
+      nav.removeEventListener("pointerenter", onMove);
+      nav.removeEventListener("scroll", onResize);
       nav.removeEventListener("pointerleave", onLeave);
       nav.removeEventListener("focusin", onFocus);
       nav.removeEventListener("focusout", onBlur);

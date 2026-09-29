@@ -28,7 +28,7 @@
   box-shadow:
     inset 0 1px 1px var(--lens-hi),
     inset 0 -1px 1.5px var(--lens-inset-dark),
-    0 calc(6px + var(--lens-lift, 0) * 4px) calc(16px + var(--lens-lift, 0) * 6px) -8px var(--lens-shadow);
+    0 calc(6px + var(--lens-lift, 0) * 4px + var(--lens-flow, 0) * 3px) calc(16px + var(--lens-lift, 0) * 6px + var(--lens-flow, 0) * 6px) -8px var(--lens-shadow);
 
   /* Fallback material (Safari/Firefox): a lightly frosted pane. */
   backdrop-filter: saturate(120%) brightness(1.02);
@@ -49,7 +49,7 @@
   border-radius: inherit;
   pointer-events: none;
   background: radial-gradient(125% 90% at 24% 16%, var(--lens-hi), transparent 55%);
-  opacity: calc(.4 + var(--lens-lift, 0) * .25);
+  opacity: calc(.4 + var(--lens-lift, 0) * .25 + var(--lens-flow, 0) * .25);
   transition: none;
 }
 
