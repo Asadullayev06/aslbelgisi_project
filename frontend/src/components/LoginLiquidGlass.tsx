@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, type RefObject } from "react";
 import "./LoginLiquidGlass.css";
 
-/** Clear water: neutral centre, two soft radial waves, no RGB separation. */
+/** Local flowing waves feather to neutral at the edges, without concentric rings. */
 function waterMap() {
   const canvas = document.createElement("canvas");
   canvas.width = canvas.height = 192;
@@ -10,13 +10,13 @@ function waterMap() {
   const data = ctx.createImageData(192, 192);
   for (let y = 0; y < 192; y++) for (let x = 0; x < 192; x++) {
     const dx = (x - 95.5) / 96, dy = (y - 95.5) / 96;
-    const radius = Math.hypot(dx, dy);
-    const wave = Math.exp(-Math.pow((radius - .68) / .13, 2)) * Math.sin((radius - .68) * 22)
-      + .35 * Math.exp(-Math.pow((radius - .39) / .10, 2)) * Math.sin((radius - .39) * 24);
-    const amplitude = radius < .98 && radius > .05 ? wave * 85 / radius : 0;
+    const envelope = Math.pow(Math.max(0, 1 - dx * dx), 3)
+      * Math.pow(Math.max(0, 1 - dy * dy), 3);
+    const flowX = Math.sin(dy * 8 + Math.sin(dx * 4) * 1.4);
+    const flowY = Math.sin(dx * 7 - Math.sin(dy * 5) * 1.2);
     const index = (y * 192 + x) * 4;
-    data.data[index] = Math.round(128 + dx * amplitude);
-    data.data[index + 1] = Math.round(128 + dy * amplitude);
+    data.data[index] = Math.round(128 + flowX * envelope * 100);
+    data.data[index + 1] = Math.round(128 + flowY * envelope * 100);
     data.data[index + 2] = 128;
     data.data[index + 3] = 255;
   }

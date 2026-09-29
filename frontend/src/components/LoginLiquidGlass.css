@@ -1,17 +1,17 @@
 /* An opt-in decorative surface for the login only. No layout or hit-testing changes. */
 .tp-water { position: absolute; inset: 0; z-index: 10; pointer-events: none; overflow: hidden; opacity: 0; }
 .tp-water::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: radial-gradient(ellipse 480px 360px at var(--water-x, 50%) var(--water-y, 50%), rgb(255 255 255 / var(--water-light, 0)), transparent 75%); }
-.tp-water-lens { position: absolute; left: 0; top: 0; width: 420px; height: 420px; border-radius: 50%; opacity: 0; pointer-events: none; will-change: transform, opacity;
-  /* A shaded inner edge gives clear glass contrast even over the white form. */
-  background: radial-gradient(ellipse at 35% 22%, #ffffff38, transparent 44%), radial-gradient(circle, transparent 46%, #27775b0a 57%, #174e3c22 65%, #ffffffb0 68%, #ffffff55 69%, #174e3c38 71%, #174e3c10 74%, transparent 78%);
+.tp-water-lens { position: absolute; left: 0; top: 0; width: 420px; height: 420px; opacity: 0; pointer-events: none; will-change: transform, opacity;
+  /* Open, feathered reflections: no enclosing rim or separate glass bubble. */
+  background: radial-gradient(ellipse 50% 15% at 43% 42%, #ffffff68, transparent 100%), radial-gradient(ellipse 42% 13% at 57% 58%, #174e3c1c, transparent 100%);
   -webkit-backdrop-filter: saturate(108%) brightness(1.015);
   backdrop-filter: saturate(108%) brightness(1.015);
-  -webkit-mask-image: radial-gradient(circle, #000 62%, #000c 70%, transparent 80%);
-  mask-image: radial-gradient(circle, #000 62%, #000c 70%, transparent 80%);
+  -webkit-mask-image: radial-gradient(ellipse 48% 42% at 50% 50%, #000 12%, #0009 45%, transparent 100%);
+  mask-image: radial-gradient(ellipse 48% 42% at 50% 50%, #000 12%, #0009 45%, transparent 100%);
 }
 .tp-water-lens.has-refraction { backdrop-filter: var(--water-filter) saturate(108%) brightness(1.015); }
-.tp-water-ring { position: absolute; width: 250px; height: 250px; border-radius: 50%; opacity: 0; pointer-events: none;
-  background: radial-gradient(ellipse at 38% 28%, transparent 61%, #245d4930 63%, #ffffffb8 64%, #245d4950 65%, transparent 68%);
+.tp-water-ring { position: absolute; width: 250px; height: 250px; opacity: 0; pointer-events: none;
+  background: radial-gradient(ellipse 44% 12% at 42% 44%, #ffffff80, transparent 100%), radial-gradient(ellipse 36% 10% at 56% 57%, #245d4938, transparent 100%);
 }
 .tp-water-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
 @media (prefers-reduced-motion: reduce), (hover: none), (pointer: coarse) { .tp-water { display: none; } }
