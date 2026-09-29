@@ -76,6 +76,7 @@ export function AppShell({ activeKey, title, onNavigate, children }: Props) {
               onClick={() => onNavigate(item.key)}
               data-nav-item
               data-active={active ? "true" : undefined}
+              aria-current={active ? "page" : undefined}
               className={cn(
                 "relative z-[1] flex items-center gap-3 rounded-[9px] px-3 py-2.5 text-left text-sm transition-colors duration-300",
                 active
@@ -115,6 +116,7 @@ export function AppShell({ activeKey, title, onNavigate, children }: Props) {
               onClick={() => onNavigate("home")}
               data-nav-item
               data-active={activeKey === "home" ? "true" : undefined}
+              aria-current={activeKey === "home" ? "page" : undefined}
               className={cn(
                 "relative z-[1] flex items-center gap-3 rounded-[9px] px-3 py-2.5 text-left text-sm transition-colors duration-300",
                 activeKey === "home"
