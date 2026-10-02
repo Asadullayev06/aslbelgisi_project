@@ -13,10 +13,9 @@ import bcrypt
 import jwt
 from fastapi import Cookie, Depends, HTTPException, Response
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
 from .config import get_settings
-from .db import get_session
+from .db import session_scope
 from .models import User
 
 
@@ -76,12 +75,18 @@ def clear_auth_cookie(response: Response) -> None:
 
 
 # ── FastAPI deps ────────────────────────────────────────────
-def current_user(
-    sess: Session = Depends(get_session),
-    ma_auth: Optional[str] = Cookie(None),
-) -> User:
+def current_user(ma_auth: Optional[str] = Cookie(None)) -> User:
     """Return the logged-in user, or 401. Use as a dependency on any protected
-    endpoint. Cookie name is the settings `cookie_name` (currently 'ma_auth')."""
+    endpoint. Cookie name is the settings `cookie_name` (currently 'ma_auth').
+
+    IMPORTANT: this opens its OWN short-lived session and closes it before the
+    endpoint body runs, rather than depending on `get_session`. Otherwise the
+    auth session's DB connection stays checked out (idle-in-transaction) for
+    the WHOLE request — which, on endpoints that then spend minutes calling
+    ASL (inspector, GTIN export, submit), lets Neon drop the idle connection
+    and makes the trailing COMMIT fail ("received 2 results from command
+    'COMMIT'"). SessionLocal uses expire_on_commit=False, so the returned User
+    stays usable after the session closes."""
     if not ma_auth:
         raise HTTPException(status_code=401, detail="Kirilmagan")
     data = _decode(ma_auth)
@@ -91,9 +96,11 @@ def current_user(
         uid = int(data.get("sub", 0))
     except (TypeError, ValueError):
         raise HTTPException(status_code=401, detail="Yaroqsiz token")
-    user = sess.execute(select(User).where(User.id == uid)).scalar_one_or_none()
-    if user is None or not user.is_active:
-        raise HTTPException(status_code=401, detail="Foydalanuvchi topilmadi")
+    with session_scope() as sess:
+        user = sess.execute(select(User).where(User.id == uid)).scalar_one_or_none()
+        if user is None or not user.is_active:
+            raise HTTPException(status_code=401, detail="Foydalanuvchi topilmadi")
+        sess.expunge(user)
     return user
 
 

@@ -417,10 +417,12 @@ export const api = {
       `/api/gtin-stock/exports/${export_id}/km-only`,
       { method: "POST", body: JSON.stringify({ api_key, inn, product_series }) }),
 
-  // Inspector
+  // Inspector — chunked by the caller; cap each request so a stalled chunk
+  // aborts and surfaces an error instead of hanging past the proxy timeout.
   inspectorLookup: (inn: string, api_key: string, codes: string[]) =>
     req<InspectorLookupResp>("/api/inspector/lookup",
-      { method: "POST", body: JSON.stringify({ inn, api_key, codes }) }),
+      { method: "POST", body: JSON.stringify({ inn, api_key, codes }) },
+      90000),
 
   // Custom aggregation
   customParseKm: async (file: File, validate_medicine: boolean) => {

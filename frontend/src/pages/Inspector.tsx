@@ -26,6 +26,7 @@ export function Inspector({ onExit }: { onExit: () => void }) {
   // codes
   const [codesText, setCodesText] = useState("");
   const [running, setRunning] = useState(false);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [response, setResponse] = useState<InspectorLookupResp | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
 
@@ -59,6 +60,12 @@ export function Inspector({ onExit }: { onExit: () => void }) {
     [codesText],
   );
 
+  // Lookups are chunked so each request finishes well under the reverse
+  // proxy's ~100s timeout (the inspector makes ~2 ASL calls per code with a
+  // small pause, so a big batch in one request would 524). Results stream in
+  // chunk-by-chunk and the progress counter updates as they land.
+  const CHUNK = 40;
+
   async function runLookup() {
     if (!verified) { push("err", "Avval INN + API kalitni tekshiring"); return; }
     const codes = codesText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
@@ -68,16 +75,32 @@ export function Inspector({ onExit }: { onExit: () => void }) {
       return;
     }
     setRunning(true); setResponse(null); setSelected(null);
+    setProgress({ done: 0, total: codes.length });
+
+    const all: InspectorResult[] = [];
+    const pushState = () => {
+      const successful = all.filter(x => x.success).length;
+      setResponse({ ok: true, total: all.length, successful,
+                    failed: all.length - successful, results: [...all] });
+    };
     try {
-      const r = await api.inspectorLookup(inn.trim(), aslKey.trim(), codes);
-      setResponse(r);
-      push(r.failed === 0 ? "hit" : "warn",
-        r.failed === 0
-          ? `Barcha ${r.successful} ta kod topildi`
-          : `${r.successful} ta muvaffaqiyatli, ${r.failed} ta xato`);
+      for (let i = 0; i < codes.length; i += CHUNK) {
+        const slice = codes.slice(i, i + CHUNK);
+        const r = await api.inspectorLookup(inn.trim(), aslKey.trim(), slice);
+        all.push(...r.results);
+        pushState();
+        setProgress({ done: Math.min(i + CHUNK, codes.length), total: codes.length });
+      }
+      const successful = all.filter(x => x.success).length;
+      const failed = all.length - successful;
+      push(failed === 0 ? "hit" : "warn",
+        failed === 0 ? `Barcha ${successful} ta kod topildi`
+                     : `${successful} ta muvaffaqiyatli, ${failed} ta xato`);
     } catch (e: any) {
-      push("err", String(e.message || e));
+      if (all.length) pushState();
+      push("err", `Xatolik${all.length ? ` (${all.length} ta natija olindi)` : ""}: ${String(e.message || e)}`);
     }
+    setProgress(null);
     setRunning(false);
   }
 
@@ -195,8 +218,9 @@ export function Inspector({ onExit }: { onExit: () => void }) {
             </div>
             <Button variant="primary" size="lg" className="w-full mt-3"
                     onClick={runLookup} disabled={!verified || running || codeCount === 0}>
-              {running ? <><Loader2 className="size-4 animate-spin" /> Tekshirilmoqda…</>
-                       : <><Sparkles className="size-4" /> Kod(lar)ni tekshirish</>}
+              {running
+                ? <><Loader2 className="size-4 animate-spin" /> Tekshirilmoqda…{progress ? ` ${progress.done}/${progress.total}` : ""}</>
+                : <><Sparkles className="size-4" /> Kod(lar)ni tekshirish</>}
             </Button>
           </Card>
         </div>
