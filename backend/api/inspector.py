@@ -15,7 +15,7 @@ from ..services import asl_inspector
 router = APIRouter(prefix="/api/inspector", tags=["inspector"])
 
 # Guard against runaway payloads.
-MAX_CODES_PER_REQUEST = 100
+MAX_CODES_PER_REQUEST = 1000
 
 
 # ── in ─────────────────────────────────────────────────────

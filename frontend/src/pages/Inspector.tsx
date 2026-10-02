@@ -14,7 +14,7 @@ import { api } from "@/api";
 import type { InspectorResult, InspectorLookupResp } from "@/types";
 import { cn } from "@/lib/utils";
 
-const MAX_CODES = 100;
+const MAX_CODES = 1000;
 
 export function Inspector({ onExit }: { onExit: () => void }) {
   // company auth
