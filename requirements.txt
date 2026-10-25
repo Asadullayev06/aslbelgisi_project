@@ -12,3 +12,4 @@ pandas>=2.0
 openpyxl>=3.1
 bcrypt>=4.1
 PyJWT>=2.8
+mcp>=1.2          # MCP server for the Hermes agent (mcp_server/)
