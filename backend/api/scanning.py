@@ -392,6 +392,89 @@ def inventory_export(project_id: int,
     )
 
 
+@router.get("/agg-export")
+def agg_export(project_id: int,
+               sess: Session = Depends(get_session),
+               _u: User = Depends(current_user)):
+    """Excel export of every SCANNED KM code in an aggregation project — one
+    row per code with its box (SSCC) and state. Includes both codes in closed
+    boxes ('yopilgan qutida') and codes in the current open box ('ochiq
+    qutida').  READ-ONLY: never modifies any table, so it is safe to download
+    while scanning is in progress."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter as _col
+
+    project = sess.get(Project, project_id)
+    if project is None:
+        raise HTTPException(404, "loyiha topilmadi")
+    if getattr(project, "mode", "aggregation") != "aggregation":
+        raise HTTPException(400, "faqat agregatsiya loyihalari uchun")
+
+    # Scanned = claimed (in the open box) or aggregated (in a closed box).
+    # Postgres sorts NULLs last on ASC, so closed-box rows group first by box,
+    # open-box rows (box_id IS NULL) come last.
+    rows = sess.execute(
+        select(KmPool.km_code, Box.sscc, Box.is_loose, KmPool.status)
+        .join(Box, Box.id == KmPool.box_id, isouter=True)
+        .where(KmPool.project_id == project_id,
+               KmPool.status.in_(("claimed", "aggregated")))
+        .order_by(KmPool.box_id.asc(), KmPool.km_code.asc())
+    ).all()
+
+    # Original scanned string (with AI91/AI92 chunks) from the audit log.
+    raw_by_km: dict[str, str] = {}
+    if rows:
+        km_list = [r[0] for r in rows]
+        from sqlalchemy import text as _text
+        raw_rows = sess.execute(_text("""
+            SELECT DISTINCT ON (km_code) km_code, raw_code
+            FROM scan_events
+            WHERE project_id = :pid AND km_code = ANY(:kms)
+              AND level IN ('hit', 'warn') AND raw_code <> ''
+            ORDER BY km_code, length(raw_code) DESC, id DESC
+        """), {"pid": project_id, "kms": km_list}).all()
+        for km, raw in raw_rows:
+            raw_by_km[km] = raw
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Kodlar"
+    ws.append(["Skanerlangan kod (raw)", "KM kodi", "Quti (SSCC)", "Loose", "Holat"])
+    header_font = Font(bold=True, color="FFFFFF")
+    fill = PatternFill("solid", fgColor="1F6F5C")
+    for col in range(1, 6):
+        c = ws.cell(row=1, column=col)
+        c.font = header_font; c.fill = fill
+        c.alignment = Alignment(horizontal="left")
+    ws.freeze_panes = "A2"
+    for cl in ("A", "B", "C"):
+        ws.column_dimensions[cl].number_format = "@"
+
+    for km, sscc, is_loose, status in rows:
+        holat = "yopilgan qutida" if status == "aggregated" else "ochiq qutida"
+        raw = raw_by_km.get(km) or km
+        ri = ws.max_row + 1
+        ws.append([str(raw), str(km), str(sscc or ""), "ha" if is_loose else "", holat])
+        for cc in (1, 2, 3):
+            ws.cell(row=ri, column=cc).number_format = "@"
+
+    for i, w in enumerate([64, 34, 24, 8, 16], start=1):
+        ws.column_dimensions[_col(i)].width = w
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    safe = "".join(ch if ch.isalnum() or ch in "-_." else "_"
+                   for ch in (project.name or f"loyiha-{project_id}"))
+    filename = f"agregatsiya_{safe}.xlsx"
+    return Response(
+        buf.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"',
+                 "Cache-Control": "no-store"},
+    )
+
+
 @router.post("/analyze")
 def analyze(project_id: int,
             sess: Session = Depends(get_session),

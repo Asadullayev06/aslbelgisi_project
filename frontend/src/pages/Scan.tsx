@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowLeft, Undo2, PackageMinus, Package, Send, CheckCircle2, AlertTriangle,
+  Download,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHead } from "@/components/ui/Card";
@@ -55,6 +56,7 @@ export function Scan({ projectId, onExit }: Props) {
   const [productionOrderId, setProductionOrderId] = useState("");
   const [modList, setModList] = useState<{ id: string; name: string }[] | null>(null);
   const [modLoading, setModLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const { flashes, push, dismiss } = useFlashes();
   const scannerRef = useRef<ScanInputHandle>(null);
 
@@ -531,6 +533,26 @@ export function Scan({ projectId, onExit }: Props) {
           <ArrowLeft className="size-4" /> Loyihalar
         </button>
         <div className="flex items-center gap-3">
+          {/* Download every scanned KM (+ box, state) as Excel. Read-only. */}
+          <Button variant="outline" size="sm"
+                  disabled={exporting || (state?.scanned_km ?? 0) === 0}
+                  onClick={async () => {
+                    setExporting(true);
+                    try {
+                      const { blob, filename } = await api.aggExport(projectId);
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement("a");
+                      a.href = url; a.download = filename;
+                      document.body.appendChild(a); a.click(); a.remove();
+                      URL.revokeObjectURL(url);
+                      push("hit", "Excel yuklab olindi");
+                    } catch (e: any) {
+                      push("err", String(e.message || e));
+                    }
+                    setExporting(false);
+                  }}>
+            <Download className="size-4" /> {exporting ? "Yuklanmoqda…" : "Excel"}
+          </Button>
           {/* Optional — runs a full quality analysis of KM/SSCC pools + boxes */}
           <AiAnalysisButton projectId={projectId} />
           <div className="text-right">

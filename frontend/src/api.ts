@@ -134,6 +134,17 @@ export const api = {
     return r.blob();
   },
 
+  /** Aggregation XLSX — every scanned KM with its box + state. Read-only on
+   *  the server, so it's safe to download mid-scan. */
+  aggExport: async (projectId: number): Promise<{ blob: Blob; filename: string }> => {
+    const r = await fetch(`/api/projects/${projectId}/agg-export`,
+                          { credentials: "include" });
+    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+    const cd = r.headers.get("Content-Disposition") || "";
+    const m = /filename="?([^";]+)"?/i.exec(cd);
+    return { blob: await r.blob(), filename: m ? m[1] : `agregatsiya-${projectId}.xlsx` };
+  },
+
   // ── Reporting module ────────────────────────────────────
   /** Admin only. */
   reportingCreate: (body: {
