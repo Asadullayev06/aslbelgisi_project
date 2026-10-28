@@ -71,6 +71,23 @@ def get_project(
         raise HTTPException(404, "loyiha topilmadi")
 
 
+# ── helpers ─────────────────────────────────────────────────
+def _bulk_insert_ignore(sess: Session, model, values: list[dict],
+                        index_elements: list[str], chunk: int = 2000) -> None:
+    """INSERT ... ON CONFLICT DO NOTHING in safe chunks.
+
+    A single multi-row INSERT binds (rows × columns) parameters, and
+    PostgreSQL caps a statement at 65535 parameters. A big project (e.g.
+    24 840 KM × 3 cols = 74 520) overflows that and 500s, so split the rows
+    into chunks well under the cap."""
+    for i in range(0, len(values), chunk):
+        sess.execute(
+            pg_insert(model)
+            .values(values[i:i + chunk])
+            .on_conflict_do_nothing(index_elements=index_elements)
+        )
+
+
 # ── create (admin only) ─────────────────────────────────────
 @router.post("", response_model=ScanState, status_code=201)
 def create_project(
@@ -136,19 +153,15 @@ def create_project(
         # 0005 — include series explicitly so the ON CONFLICT can find it.
         # Aggregation projects always use series='' (the empty-string
         # sentinel), reserved for cross-series duplicates in inventory.
-        sess.execute(
-            pg_insert(KmPool)
-            .values([{"project_id": project.id, "km_code": c, "series": ""}
-                     for c in km_codes])
-            .on_conflict_do_nothing(
-                index_elements=["project_id", "km_code", "series"])
-        )
+        _bulk_insert_ignore(
+            sess, KmPool,
+            [{"project_id": project.id, "km_code": c, "series": ""} for c in km_codes],
+            ["project_id", "km_code", "series"])
     if box_codes:
-        sess.execute(
-            pg_insert(BoxPool)
-            .values([{"project_id": project.id, "sscc": s} for s in box_codes])
-            .on_conflict_do_nothing(index_elements=["project_id", "sscc"])
-        )
+        _bulk_insert_ignore(
+            sess, BoxPool,
+            [{"project_id": project.id, "sscc": s} for s in box_codes],
+            ["project_id", "sscc"])
     sess.flush()
     return build_state(sess, project.id, u.id)
 
@@ -222,12 +235,10 @@ def create_inventory_project(
     sess.flush()
 
     if codes:
-        sess.execute(
-            pg_insert(KmPool)
-            .values([{"project_id": project.id, "km_code": c, "series": series_name}
-                     for c in codes])
-            .on_conflict_do_nothing(index_elements=["project_id", "km_code", "series"])
-        )
+        _bulk_insert_ignore(
+            sess, KmPool,
+            [{"project_id": project.id, "km_code": c, "series": series_name} for c in codes],
+            ["project_id", "km_code", "series"])
     sess.flush()
     return build_state(sess, project.id, u.id)
 
