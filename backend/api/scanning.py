@@ -6,6 +6,7 @@ undo their in-progress box via /discard, but only admin can undo a closed one).
 from __future__ import annotations
 
 import io
+import re
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
@@ -32,6 +33,16 @@ from ..services import project_analysis
 from .state import build_state
 
 router = APIRouter(prefix="/api/projects/{project_id}", tags=["scanning"])
+
+
+_EXCEL_ILLEGAL_CONTROLS = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F]")
+
+
+def _excel_safe_code(value: str) -> str:
+    """Keep scanner control characters reversible in Excel text cells."""
+    return _EXCEL_ILLEGAL_CONTROLS.sub(
+        lambda match: f"_x{ord(match.group(0)):04X}_", str(value)
+    )
 
 
 def _wrap(res: dict, sess: Session, project_id: int, user_id: int) -> ScanResponse:
@@ -453,7 +464,7 @@ def agg_export(project_id: int,
 
     for km, sscc, is_loose, status in rows:
         holat = "yopilgan qutida" if status == "aggregated" else "ochiq qutida"
-        raw = raw_by_km.get(km) or km
+        raw = _excel_safe_code(raw_by_km.get(km) or km)
         ri = ws.max_row + 1
         ws.append([str(raw), str(km), str(sscc or ""), "ha" if is_loose else "", holat])
         for cc in (1, 2, 3):
