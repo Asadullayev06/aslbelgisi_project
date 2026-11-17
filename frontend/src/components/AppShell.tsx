@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import {
   Package, ClipboardList, Layers, Boxes, ScanBarcode, ScanLine, Search,
-  Barcode, Printer, Settings, LogOut, Sun, Moon, LayoutDashboard, Shield, HardHat,
+  Barcode, Printer, Settings, LogOut, Sun, Moon, LayoutDashboard, Shield, HardHat, ShoppingCart,
 } from "lucide-react";
 import { useAuth, isAdmin } from "@/auth";
 import { DesignSwitch } from "@/design";
@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 
 export type NavDest =
   | "home" | "aggregation" | "inventory" | "reporting" | "boxcheck"
-  | "stock" | "inspector" | "custom" | "search" | "sscc" | "bartender" | "admin";
+  | "stock" | "inspector" | "custom" | "search" | "sscc" | "bartender" | "kmOrders" | "admin";
 
 interface Props {
   activeKey: NavDest | null;
@@ -28,6 +28,7 @@ const MAIN: NavItem[] = [
   { key: "boxcheck",    label: "Quti tekshiruvi",  icon: <Boxes className="size-[18px]" /> },
 ];
 const TOOLS: NavItem[] = [
+  { key: "kmOrders", label: "KM kod sotib olish", icon: <ShoppingCart className="size-[18px]" /> },
   { key: "stock",     label: "GTIN Ostatok",        icon: <Barcode className="size-[18px]" /> },
   { key: "inspector", label: "Marka Kod Tekshiruvi", icon: <ScanLine className="size-[18px]" /> },
   { key: "custom",    label: "Custom Aggregation",   icon: <Layers className="size-[18px]" /> },

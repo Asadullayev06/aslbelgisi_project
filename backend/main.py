@@ -21,7 +21,7 @@ from .api import (
     asl_companies as asl_companies_api,
     bartender as bartender_api,
     box_check as box_check_api,
-    custom_agg, gtin_stock, inspector, projects,
+    custom_agg, gtin_stock, inspector, km_orders, projects,
     reporting as reporting_api, scanning,
     search as search_api, sscc as sscc_api, submissions, users as users_api,
 )
@@ -42,6 +42,7 @@ app.include_router(projects.router)
 app.include_router(scanning.router)
 app.include_router(submissions.router)
 app.include_router(gtin_stock.router)
+app.include_router(km_orders.router)
 app.include_router(inspector.router)
 app.include_router(custom_agg.router)
 app.include_router(search_api.router)

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Boxes, Plus, LogOut, Shield, HardHat, ScanBarcode, Package, ArrowRight, ScanLine, Layers, Search, ClipboardList, ArrowLeft, Settings, Trash2, Pencil, Check, X, Sun, Moon, Barcode, Printer } from "lucide-react";
+import { Boxes, Plus, LogOut, Shield, HardHat, ScanBarcode, Package, ArrowRight, ScanLine, Layers, Search, ClipboardList, ArrowLeft, Settings, Trash2, Pencil, Check, X, Sun, Moon, Barcode, Printer, ShoppingCart } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHead } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
@@ -10,6 +10,7 @@ import { Scan } from "@/pages/Scan";
 import { ScanInventory } from "@/pages/ScanInventory";
 import { Login } from "@/pages/Login";
 import { GtinStock } from "@/pages/GtinStock";
+import { KmOrders } from "@/pages/KmOrders";
 import { Inspector } from "@/pages/Inspector";
 import { CustomAggregation } from "@/pages/CustomAggregation";
 import { CodeSearch } from "@/pages/CodeSearch";
@@ -39,6 +40,7 @@ type Route =
   | { kind: "repSetup"; presetName?: string; presetProduct?: string; pickFromExisting?: boolean }
   | { kind: "repScan"; projectId: number }
   | { kind: "stock" }
+  | { kind: "kmOrders" }
   | { kind: "inspector" }
   | { kind: "custom" }
   | { kind: "search" }
@@ -125,6 +127,7 @@ function destToRoute(dest: NavDest): Route {
     case "reporting":   return { kind: "repPicker" };
     case "boxcheck":    return { kind: "bcPicker" };
     case "stock":       return { kind: "stock" };
+    case "kmOrders":    return { kind: "kmOrders" };
     case "inspector":   return { kind: "inspector" };
     case "custom":      return { kind: "custom" };
     case "search":      return { kind: "search" };
@@ -143,6 +146,7 @@ function activeKeyFor(route: Route): NavDest | null {
     case "repPicker": case "repSetup": case "repScan": return "reporting";
     case "bcPicker": case "bcSetup": case "bcScan":  return "boxcheck";
     case "stock":                                    return "stock";
+    case "kmOrders":                                 return "kmOrders";
     case "inspector":                                return "inspector";
     case "custom":                                   return "custom";
     case "search":                                   return "search";
@@ -162,6 +166,7 @@ function titleFor(route: Route): string {
     case "repPicker": case "repSetup": case "repScan": return "Hisobot";
     case "bcPicker": case "bcSetup": case "bcScan":  return "Quti tekshiruvi";
     case "stock":                                    return "GTIN Ostatok";
+    case "kmOrders":                                 return "KM kod sotib olish";
     case "inspector":                                return "Marka Kod Tekshiruvi";
     case "custom":                                   return "Custom Aggregation";
     case "search":                                   return "Kod Qidiruv";
@@ -190,6 +195,9 @@ function ClassicShell({ route, setRoute }: {
   }
   if (route.kind === "stock") {
     return <GtinStock onExit={() => setRoute({ kind: "home" })} />;
+  }
+  if (route.kind === "kmOrders") {
+    return <KmOrders onExit={() => setRoute({ kind: "home" })} />;
   }
   if (route.kind === "inspector") {
     return <Inspector onExit={() => setRoute({ kind: "home" })} />;
@@ -286,6 +294,7 @@ function ClassicShell({ route, setRoute }: {
   }
   return <Home onAggregation={() => setRoute({ kind: "modeChooser" })}
                onStock={() => setRoute({ kind: "stock" })}
+               onKmOrders={() => setRoute({ kind: "kmOrders" })}
                onInspector={() => setRoute({ kind: "inspector" })}
                onCustom={() => setRoute({ kind: "custom" })}
                onSearch={() => setRoute({ kind: "search" })}
@@ -923,6 +932,9 @@ function Dashboard({ onNavigate }: { onNavigate: (dest: NavDest) => void }) {
 
       <div className="text-[13px] font-bold text-text/70 mb-3">Vositalar</div>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <ToolCard icon={<ShoppingCart className="size-8 text-accent" />} title="KM kod sotib olish"
+                  subtitle="ASL Belgisi orqali KM chiqarish buyurtmasi"
+                  onClick={() => onNavigate("kmOrders")} />
         <ToolCard icon={<Barcode className="size-8 text-accent" />} title="GTIN Ostatok"
                   subtitle="GTIN bo'yicha real vaqtdagi kompaniya qoldiqlari"
                   onClick={() => onNavigate("stock")} />
@@ -952,9 +964,10 @@ function Dashboard({ onNavigate }: { onNavigate: (dest: NavDest) => void }) {
 }
 
 
-function Home({ onAggregation, onStock, onInspector, onCustom, onSearch, onSscc, onBartender, onAdmin }: {
+function Home({ onAggregation, onStock, onKmOrders, onInspector, onCustom, onSearch, onSscc, onBartender, onAdmin }: {
   onAggregation: () => void;
   onStock: () => void;
+  onKmOrders: () => void;
   onInspector: () => void;
   onCustom: () => void;
   onSearch: () => void;
@@ -989,6 +1002,8 @@ function Home({ onAggregation, onStock, onInspector, onCustom, onSearch, onSscc,
           subtitle="GTIN bo'yicha real vaqtdagi kompaniya qoldiqlarini ko'rish"
           onClick={onStock}
         />
+        <ToolCard icon={<ShoppingCart className="size-8 text-accent" />} title="KM kod sotib olish"
+                  subtitle="ASL Belgisi orqali KM chiqarish buyurtmasi" onClick={onKmOrders} />
         <ToolCard
           icon={<ScanLine className="size-8 text-accent" />}
           title="Marka Kod Tekshiruvi"
