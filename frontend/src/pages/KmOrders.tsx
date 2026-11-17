@@ -55,13 +55,13 @@ export function KmOrders({ onExit }: { onExit: () => void }) {
     if (result.mods.length === 1 && /^\d+$/.test(result.mods[0].id)) setPlace(result.mods[0].id);
   });
   const create = () => run(async () => {
-    if (!verified) throw Error("Avval firma kalitini tekshiring");
-    if (!/^\d+$/.test(place) || Number(place) < 1) throw Error("MOD ID raqamini kiriting");
+    if (!/^\d{9}$/.test(credentials.inn) || !credentials.api_key) throw Error("1-bo'limda firma INN va API kalitini kiriting");
+    if (place.trim() && (!/^\d+$/.test(place) || Number(place) < 1)) throw Error("MOD ID musbat raqam bo'lishi kerak yoki bo'sh qoldiring");
     if (products.some(p => !/^\d{14}$/.test(p.gtin) || !Number.isInteger(p.quantity) || p.quantity < 1 || p.quantity > 150000))
       throw Error("Har bir GTIN 14 raqam, miqdor 1–150000 bo'lishi kerak");
-    if (!window.confirm(`${products.reduce((n, p) => n + p.quantity, 0)} ta KM kod uchun ASL buyurtmasini yuborasizmi? To'lov ASL tarifiga ko'ra hisoblanishi mumkin.`)) return;
+    if (!window.confirm(`${products.reduce((n, p) => n + p.quantity, 0)} ta KM kod uchun ASL buyurtmasini yuborasizmi?${place.trim() ? "" : " MOD kiritilmagan; ASL bu buyurtmani rad etishi mumkin."} To'lov ASL tarifiga ko'ra hisoblanishi mumkin.`)) return;
     const result = await api.kmOrderCreate({ ...credentials, product_group: group, release_method_type: purpose,
-      business_place_id: Number(place), po_number: po.trim(), products });
+      ...(place.trim() ? { business_place_id: Number(place) } : {}), po_number: po.trim(), products });
     setOrderId(result.order_id); setStatus(null); setPack(null); setLastPacks({});
     setMessage(`Buyurtma yaratildi: ${result.order_id}`);
   });
@@ -92,7 +92,7 @@ export function KmOrders({ onExit }: { onExit: () => void }) {
       <h2 className="font-bold">2. Buyurtma</h2>
       <div className="grid gap-4 md:grid-cols-2"><Field label="Mahsulot guruhi"><select className="w-full h-11 rounded-lg border border-border bg-surface2 px-3" value={group} onChange={e => setGroup(e.target.value)}>{GROUPS.map(x => <option key={x}>{x}</option>)}</select></Field>
       <Field label="Markirovka maqsadi"><select className="w-full h-11 rounded-lg border border-border bg-surface2 px-3" value={purpose} onChange={e => setPurpose(e.target.value)}>{PURPOSES.map(x => <option key={x}>{x}</option>)}</select></Field>
-      <div className="space-y-2"><Field label="MOD / businessPlaceId" hint="Firma mustaqil buyurtma berganda uning biznes joyi ID raqami kerak"><Input value={place} onChange={e => setPlace(e.target.value)} inputMode="numeric" /></Field>
+      <div className="space-y-2"><Field label="MOD / businessPlaceId (ixtiyoriy API maydoni)" hint="Firma mustaqil buyurtma berganda ASL buni talab qilishi mumkin"><Input value={place} onChange={e => setPlace(e.target.value)} inputMode="numeric" /></Field>
         <button disabled={busy || !verified} onClick={loadMods} className="text-sm text-accent disabled:opacity-50">API kalit orqali MODlarni olish</button>
         {mods.length > 0 && <select aria-label="MOD tanlash" className="w-full h-11 rounded-lg border border-border bg-surface2 px-3" value={mods.some(m => m.id === place) ? place : ""} onChange={e => setPlace(e.target.value)}><option value="">MODni tanlang</option>{mods.filter(m => /^\d+$/.test(m.id)).map(m => <option key={m.id} value={m.id}>{m.name || "MOD"} · ID {m.id}</option>)}</select>}
         {modError && <p className="text-xs text-danger">MODlarni olish imkoni bo'lmadi: {modError}. Firma administratoridan biznes joyi ID sini so'rang.</p>}
@@ -104,7 +104,9 @@ export function KmOrders({ onExit }: { onExit: () => void }) {
         <Field label="Qadoq turi"><select className="w-full h-11 rounded-lg border border-border bg-surface2 px-3" value={p.cis_type} onChange={e => updateProduct(i, { cis_type: e.target.value })}>{PACKAGES.map(x => <option key={x}>{x}</option>)}</select></Field>
         <button aria-label="GTINni o'chirish" disabled={products.length === 1} onClick={() => setProducts(rows => rows.filter((_, n) => n !== i))} className="h-11 disabled:opacity-30"><Trash2 className="size-4" /></button></div>)}
       <button disabled={products.length >= 10} onClick={() => setProducts(rows => [...rows, { gtin: "", quantity: 1, cis_type: "UNIT" }])} className="inline-flex gap-2 items-center text-accent disabled:opacity-40"><Plus className="size-4" /> GTIN qo'shish</button>
-      <div><button disabled={busy || !verified} onClick={create} className="rounded-lg bg-accent px-5 py-2.5 text-white disabled:opacity-50">ASL ga buyurtma yuborish</button></div>
+      <div className="space-y-2"><button disabled={busy} onClick={create} className="rounded-lg bg-accent px-5 py-2.5 text-white disabled:opacity-50">{busy ? "Yuborilmoqda…" : "ASL ga buyurtma yuborish"}</button>
+        <p className="text-xs text-muted">Kalit egaligi yuborish vaqtida ham tekshiriladi. MOD bo'sh bo'lsa, ASL javobi uning zarurligini ko'rsatadi.</p>
+        {message && <p role="status" className="rounded-lg border border-border bg-surface2 p-3 text-sm">{message}</p>}</div>
     </section>
     <section className="rounded-xl border border-border bg-surface p-5 space-y-4">
       <h2 className="font-bold">3. Holat va kodlarni olish</h2>
@@ -116,6 +118,5 @@ export function KmOrders({ onExit }: { onExit: () => void }) {
           <button disabled={busy || !Number.isInteger(receiveCount) || receiveCount < 1 || receiveCount > 1000 || (!s.leftInBuffer && !s.availableCodes)} onClick={() => receive(s.gtin, Math.min(Number(s.leftInBuffer) || Number(s.availableCodes), receiveCount))} className="rounded-lg bg-accent px-3 py-1.5 text-white disabled:opacity-40">Kodlarni olish</button></div>)}</div>}
       {pack && <div className="space-y-2"><p>{pack.codes?.length || 0} ta KM · paket ID: {pack.packId}</p><button onClick={download} className="rounded-lg border border-border px-4 py-2">CSV yuklab olish</button></div>}
     </section>
-    {message && <p role="status" className="rounded-lg border border-border bg-surface2 p-3 text-sm">{message}</p>}
   </div>;
 }

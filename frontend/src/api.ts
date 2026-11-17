@@ -81,7 +81,7 @@ async function req<T>(path: string, init: RequestInit = {},
 
 export const api = {
   kmOrderVerify: (body: { inn: string; api_key: string }) => req<{ ok: boolean }>("/api/km-orders/verify", { method: "POST", body: JSON.stringify(body) }),
-  kmOrderCreate: (body: { inn: string; api_key: string; product_group: string; release_method_type: string; business_place_id: number; po_number: string; products: { gtin: string; quantity: number; cis_type: string }[] }) => req<{ order_id: string }>("/api/km-orders", { method: "POST", body: JSON.stringify(body) }),
+  kmOrderCreate: (body: { inn: string; api_key: string; product_group: string; release_method_type: string; business_place_id?: number; po_number: string; products: { gtin: string; quantity: number; cis_type: string }[] }) => req<{ order_id: string }>("/api/km-orders", { method: "POST", body: JSON.stringify(body) }),
   kmOrderStatus: (body: { inn: string; api_key: string; order_id: string }) => req<{ orders: any; suborders: any }>("/api/km-orders/status", { method: "POST", body: JSON.stringify(body) }),
   kmOrderReceive: (body: { inn: string; api_key: string; order_id: string; gtin: string; quantity: number; last_pack_id: string }) => req<{ packId: string; codes: string[] }>("/api/km-orders/receive", { method: "POST", body: JSON.stringify(body) }),
   // auth

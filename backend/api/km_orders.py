@@ -34,7 +34,7 @@ class Product(BaseModel):
 class OrderBody(Credentials):
     product_group: str
     release_method_type: str = "PRIMARY"
-    business_place_id: int = Field(gt=0)
+    business_place_id: int | None = Field(default=None, gt=0)
     products: list[Product] = Field(min_length=1, max_length=10)
     po_number: str = ""
 
@@ -93,10 +93,11 @@ def create_order(body: OrderBody, _user: User = Depends(current_user)):
     _verified(body.inn, body.api_key)
     payload = {"productGroup": body.product_group,
                "releaseMethodType": body.release_method_type,
-               "businessPlaceId": body.business_place_id,
                "products": [{"gtin": p.gtin, "quantity": p.quantity,
                              "cisType": p.cis_type, "serialNumberType": "OPERATOR"}
                             for p in body.products]}
+    if body.business_place_id is not None:
+        payload["businessPlaceId"] = body.business_place_id
     if body.po_number.strip():
         payload["poNumber"] = body.po_number.strip()
     result = _call("POST", "/api/orders", body.api_key, json=payload)
