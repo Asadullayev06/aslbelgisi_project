@@ -7,6 +7,10 @@ import type { ModItem } from "@/types";
 
 type Product = { gtin: string; quantity: number; cis_type: string };
 const GROUPS = ["vegetableoil", "bio", "tobacco", "alcohol", "beer", "pharma", "water", "medicals", "appliances", "antiseptic", "fertilizers"];
+const GROUP_LABELS: Record<string, string> = {
+  pharma: "pharma — Dori vositalari",
+  medicals: "medicals — Tibbiy buyumlar (dori emas)",
+};
 const PACKAGES = ["UNIT", "GROUP", "SET", "BOX_LV_1", "BOX_LV_2"];
 const PURPOSES = ["PRIMARY", "REMAINS", "COMISSION", "REMARK"];
 
@@ -84,7 +88,7 @@ export function KmOrders({ onExit }: { onExit: () => void }) {
     setSearchMessage(""); setFoundOrders(null); setBusy(true);
     try {
       if (!/^\d{9}$/.test(credentials.inn) || !credentials.api_key) throw Error("1-bo'limda firmadan INN va API kalitini tanlang");
-      if (!searchPo.trim() || !searchGroup) throw Error("Ishlab chiqarish buyurtma raqami va mahsulot guruhini kiriting");
+      if (!searchPo.trim()) throw Error("Ishlab chiqarish buyurtma raqamini kiriting");
       const result = await api.kmOrderSearch({ ...credentials, po_number: searchPo.trim(), product_group: searchGroup });
       setFoundOrders(result.orderInfos || []);
       setSearchMessage(result.orderInfos?.length ? "Topilgan buyurtmani tanlang, keyin holatini yangilang." : "Buyurtma topilmadi. ASL javobi kechikishi mumkin; takroriy buyurtma yuborishdan oldin yana tekshiring.");
@@ -122,7 +126,7 @@ export function KmOrders({ onExit }: { onExit: () => void }) {
     </section>
     <section className="rounded-xl border border-border bg-surface p-5 space-y-4">
       <h2 className="font-bold">2. Buyurtma</h2>
-      <div className="grid gap-4 md:grid-cols-2"><Field label="Mahsulot guruhi"><select className="w-full h-11 rounded-lg border border-border bg-surface2 px-3" value={group} onChange={e => setGroup(e.target.value)}>{GROUPS.map(x => <option key={x}>{x}</option>)}</select></Field>
+      <div className="grid gap-4 md:grid-cols-2"><Field label="Mahsulot guruhi"><select className="w-full h-11 rounded-lg border border-border bg-surface2 px-3" value={group} onChange={e => setGroup(e.target.value)}>{GROUPS.map(x => <option key={x} value={x}>{GROUP_LABELS[x] || x}</option>)}</select></Field>
       <Field label="Markirovka maqsadi"><select className="w-full h-11 rounded-lg border border-border bg-surface2 px-3" value={purpose} onChange={e => setPurpose(e.target.value)}>{PURPOSES.map(x => <option key={x}>{x}</option>)}</select></Field>
       <div className="space-y-2"><Field label="MOD / businessPlaceId (ixtiyoriy API maydoni)" hint="Firma mustaqil buyurtma berganda ASL buni talab qilishi mumkin"><Input value={place} onChange={e => setPlace(e.target.value)} inputMode="numeric" /></Field>
         <button disabled={busy || !verified} onClick={loadMods} className="text-sm text-accent disabled:opacity-50">API kalit orqali MODlarni olish</button>
@@ -144,7 +148,7 @@ export function KmOrders({ onExit }: { onExit: () => void }) {
       <h2 className="font-bold">3. Holat va kodlarni olish</h2>
       <p className="text-sm text-muted">Agar yuborishdan keyin 502 chiqqan bo'lsa, buyurtma takrorlanmasligi uchun avval shu yerda qidiring.</p>
       <div className="grid gap-4 md:grid-cols-2"><Field label="Qidiruv: ishlab chiqarish buyurtma raqami (poNumber)"><Input value={searchPo} onChange={e => setSearchPo(e.target.value)} placeholder="Masalan: 20866 svecha" /></Field>
-        <Field label="Qidiruv: mahsulot guruhi"><select className="w-full h-11 rounded-lg border border-border bg-surface2 px-3" value={searchGroup} onChange={e => setSearchGroup(e.target.value)}><option value="">Tanlang</option>{GROUPS.map(x => <option key={x}>{x}</option>)}</select></Field></div>
+        <Field label="Qidiruv: mahsulot guruhi"><select className="w-full h-11 rounded-lg border border-border bg-surface2 px-3" value={searchGroup} onChange={e => setSearchGroup(e.target.value)}><option value="">Barcha guruhlar</option>{GROUPS.map(x => <option key={x} value={x}>{GROUP_LABELS[x] || x}</option>)}</select></Field></div>
       <button disabled={busy} onClick={searchOrders} className="rounded-lg border border-border px-4 py-2 disabled:opacity-50">Buyurtmalarni qidirish</button>
       {searchMessage && <p role="status" className="rounded-lg border border-border bg-surface2 p-3 text-sm">{searchMessage}</p>}
       {foundOrders && <div className="space-y-2">{foundOrders.length === 0 && <p className="text-sm text-muted">Hozircha buyurtma topilmadi.</p>}{foundOrders.map(o => <button key={o.orderId} onClick={() => { setOrderId(o.orderId); setStatus(null); }} className="block w-full rounded-lg border border-border p-3 text-left text-sm hover:border-accent"><strong>{o.orderStatus}</strong> · {o.poNumber || "raqamsiz"} · {o.createDate || ""}<br /><span className="font-mono text-xs">{o.orderId}</span></button>)}</div>}
