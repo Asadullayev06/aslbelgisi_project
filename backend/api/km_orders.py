@@ -125,7 +125,9 @@ def status(body: OrderLookup, _user: User = Depends(current_user)):
 @router.post("/search")
 def search_orders(body: OrderSearch, _user: User = Depends(current_user)):
     """Read-only recovery after an order POST returns no usable response."""
-    _verified(body.inn, body.api_key)
+    # ASL scopes GET /api/orders to the Bearer key's owner. Repeating the
+    # separate INN ownership check here adds another remote request (and uses
+    # its daily quota) before this recovery lookup can run.
     params = {"limit": 100}
     if body.po_number.strip():
         params["poNumber"] = body.po_number.strip()
