@@ -43,6 +43,11 @@ class OrderLookup(Credentials):
     order_id: str
 
 
+class OrderSearch(Credentials):
+    po_number: str = ""
+    product_group: str = ""
+
+
 class ReceiveBody(OrderLookup):
     gtin: str = Field(pattern=r"^\d{14}$")
     quantity: int = Field(ge=1, le=150000)
@@ -115,6 +120,18 @@ def status(body: OrderLookup, _user: User = Depends(current_user)):
     suborders = _call("GET", "/api/orders/sub-orders", body.api_key,
                       params={"orderId": body.order_id})
     return {"orders": orders, "suborders": suborders}
+
+
+@router.post("/search")
+def search_orders(body: OrderSearch, _user: User = Depends(current_user)):
+    """Read-only recovery after an order POST returns no usable response."""
+    _verified(body.inn, body.api_key)
+    params = {"limit": 100}
+    if body.po_number.strip():
+        params["poNumber"] = body.po_number.strip()
+    if body.product_group in GROUPS:
+        params["productGroup"] = body.product_group
+    return _call("GET", "/api/orders", body.api_key, params=params)
 
 
 @router.post("/receive")

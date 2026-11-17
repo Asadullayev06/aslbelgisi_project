@@ -83,6 +83,7 @@ export const api = {
   kmOrderVerify: (body: { inn: string; api_key: string }) => req<{ ok: boolean }>("/api/km-orders/verify", { method: "POST", body: JSON.stringify(body) }),
   kmOrderCreate: (body: { inn: string; api_key: string; product_group: string; release_method_type: string; business_place_id?: number; po_number: string; products: { gtin: string; quantity: number; cis_type: string }[] }) => req<{ order_id: string }>("/api/km-orders", { method: "POST", body: JSON.stringify(body) }),
   kmOrderStatus: (body: { inn: string; api_key: string; order_id: string }) => req<{ orders: any; suborders: any }>("/api/km-orders/status", { method: "POST", body: JSON.stringify(body) }),
+  kmOrderSearch: (body: { inn: string; api_key: string; po_number: string; product_group: string }) => req<{ orderInfos: { orderId: string; orderStatus: string; poNumber?: string; createDate?: string }[] }>("/api/km-orders/search", { method: "POST", body: JSON.stringify(body) }),
   kmOrderReceive: (body: { inn: string; api_key: string; order_id: string; gtin: string; quantity: number; last_pack_id: string }) => req<{ packId: string; codes: string[] }>("/api/km-orders/receive", { method: "POST", body: JSON.stringify(body) }),
   // auth
   me:     () => req<{ id: number; username: string; role: string }>("/api/auth/me"),
