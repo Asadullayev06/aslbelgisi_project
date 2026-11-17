@@ -36,6 +36,7 @@ export function KmOrders({ onExit }: { onExit: () => void }) {
   const credentials = { inn: inn.trim(), api_key: key.trim() };
   function changeCredentials(i: string, k: string) {
     setInn(i); setKey(k); setVerified(false); setMods([]); setPlace(""); setModError("");
+    setMessage(""); setSearchMessage(""); setFoundOrders(null); setStatus(null);
   }
   const updateProduct = (index: number, patch: Partial<Product>) => setProducts(rows => rows.map((r, i) => i === index ? { ...r, ...patch } : r));
   async function run(action: () => Promise<void>) {
@@ -44,8 +45,9 @@ export function KmOrders({ onExit }: { onExit: () => void }) {
     finally { setBusy(false); }
   }
   const check = () => run(async () => {
+    setVerified(false);
     if (!/^\d{9}$/.test(credentials.inn) || !credentials.api_key) throw Error("9 raqamli INN va API kalitni kiriting");
-    await api.kmOrderVerify(credentials); setVerified(true); setMessage("Firma API kaliti tasdiqlandi");
+    await api.kmOrderVerify(credentials); setVerified(true); setMessage("Kalit firma INN raqamiga tegishli. Buyurtma xizmatiga kirish huquqi ASL tomonidan alohida tekshiriladi.");
     try {
       const result = await api.customModList(credentials.inn, credentials.api_key);
       if (result.ok) { setMods(result.mods); if (result.mods.length === 1 && /^\d+$/.test(result.mods[0].id)) setPlace(result.mods[0].id); }
@@ -115,7 +117,7 @@ export function KmOrders({ onExit }: { onExit: () => void }) {
       <h2 className="font-bold">1. Firma</h2>
       <CompanyPicker currentInn={inn} currentKey={key} onPick={(i, k) => changeCredentials(i, k)} />
       <div className="grid gap-4 md:grid-cols-2"><Field label="INN"><Input value={inn} onChange={e => changeCredentials(e.target.value, key)} inputMode="numeric" /></Field>
-      <Field label="ASL API kalit"><Input type="password" value={key} onChange={e => changeCredentials(inn, e.target.value)} autoComplete="off" /></Field></div>
+      <Field label="ASL API kalit"><Input name="asl-firm-api-key" type="password" value={key} onChange={e => changeCredentials(inn, e.target.value)} autoComplete="new-password" data-1p-ignore data-lpignore="true" spellCheck={false} /></Field></div>
       <button disabled={busy} onClick={check} className="rounded-lg bg-accent px-4 py-2 text-white disabled:opacity-50">{verified ? "✓ Tasdiqlangan" : "Kalitni tekshirish"}</button>
     </section>
     <section className="rounded-xl border border-border bg-surface p-5 space-y-4">

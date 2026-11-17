@@ -84,9 +84,15 @@ def _call(method: str, path: str, key: str, **kwargs):
         # errors so proxies do not replace the useful rejection body with a
         # generic 502 page. ASL 401 must not log the user out of this app.
         status = response.status_code if 400 <= response.status_code < 500 else 502
+        hint = ""
         if status == 401:
             status = 403
-        raise HTTPException(status, f"ASL HTTP {response.status_code}: {response.text[:1000]}")
+            hint = ("ASL buyurtma xizmati API kalitni qabul qilmadi. "
+                    "Saqlangan firmadan kalitni qayta tanlang yoki amaldagi firma API kalitini kiriting. "
+                    "Bu maydonga platforma login paroli kiritilmaydi. ")
+        elif status == 403:
+            hint = "ASL buyurtma xizmatiga kirishni rad etdi. Firma administratoridan API foydalanuvchisi huquqlarini tekshirtiring. "
+        raise HTTPException(status, f"{hint}ASL HTTP {response.status_code}: {response.text[:1000]}")
     try:
         return response.json()
     except ValueError as exc:
