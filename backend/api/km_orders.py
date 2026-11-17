@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import logging
 
 import requests
 from fastapi import APIRouter, Depends, HTTPException
@@ -13,6 +14,7 @@ from ..models import User
 from ..services.asl_stock import verify_api_key_ownership
 
 router = APIRouter(prefix="/api/km-orders", tags=["km-orders"])
+log = logging.getLogger(__name__)
 GROUPS = {"vegetableoil", "bio", "tobacco", "alcohol", "beer", "pharma", "water",
           "medicals", "appliances", "antiseptic", "fertilizers"}
 PURPOSES = {"PRIMARY", "REMAINS", "COMISSION", "REMARK"}
@@ -72,12 +74,19 @@ def _call(method: str, path: str, key: str, **kwargs):
             timeout=45, **kwargs,
         )
     except requests.RequestException as exc:
+        log.warning("ASL ICOM %s %s network error: %s", method, path, type(exc).__name__)
         raise HTTPException(502, f"ASL bilan aloqa xatosi: {exc}") from exc
     if not response.ok:
+        log.warning("ASL ICOM %s %s returned HTTP %s (content-type=%s, bytes=%s)",
+                    method, path, response.status_code,
+                    response.headers.get("content-type", ""), len(response.content))
         raise HTTPException(502, f"ASL HTTP {response.status_code}: {response.text[:500]}")
     try:
         return response.json()
     except ValueError as exc:
+        log.warning("ASL ICOM %s %s returned non-JSON HTTP %s (content-type=%s, bytes=%s)",
+                    method, path, response.status_code,
+                    response.headers.get("content-type", ""), len(response.content))
         raise HTTPException(502, "ASL noto'g'ri JSON javob qaytardi") from exc
 
 
