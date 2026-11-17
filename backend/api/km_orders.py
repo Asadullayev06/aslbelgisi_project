@@ -80,7 +80,13 @@ def _call(method: str, path: str, key: str, **kwargs):
         log.warning("ASL ICOM %s %s returned HTTP %s (content-type=%s, bytes=%s)",
                     method, path, response.status_code,
                     response.headers.get("content-type", ""), len(response.content))
-        raise HTTPException(502, f"ASL HTTP {response.status_code}: {response.text[:500]}")
+        # A rejected ASL request is not a gateway failure. Preserve client
+        # errors so proxies do not replace the useful rejection body with a
+        # generic 502 page. ASL 401 must not log the user out of this app.
+        status = response.status_code if 400 <= response.status_code < 500 else 502
+        if status == 401:
+            status = 403
+        raise HTTPException(status, f"ASL HTTP {response.status_code}: {response.text[:1000]}")
     try:
         return response.json()
     except ValueError as exc:
