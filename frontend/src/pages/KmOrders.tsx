@@ -73,7 +73,7 @@ export function KmOrders({ onExit }: { onExit: () => void }) {
     } catch (e: any) {
       if (!e?.status || e.status >= 500) {
         setUncertain(true);
-        throw Error("Serverdan javob olinmadi (502). Buyurtma ASLda yaratilgan bo'lishi mumkin. Qayta yuborishdan oldin pastdagi 'Buyurtmalarni qidirish' tugmasini bosing.");
+        throw Error(`Buyurtma natijasi noma'lum. Qayta yubormang; avval pastda qidiring. Texnik javob: ${e?.message || "aloqa xatosi"}`);
       }
       throw e;
     }
@@ -87,7 +87,9 @@ export function KmOrders({ onExit }: { onExit: () => void }) {
       setFoundOrders(result.orderInfos || []);
       setSearchMessage(result.orderInfos?.length ? "Topilgan buyurtmani tanlang, keyin holatini yangilang." : "Buyurtma topilmadi. ASL javobi kechikishi mumkin; takroriy buyurtma yuborishdan oldin yana tekshiring.");
     } catch (e: any) {
-      setSearchMessage(e?.status === 502 ? "Qidiruv ham 502 bilan tugadi. ASLda buyurtma bor-yo'qligi hali noma'lum; qayta buyurtma yubormang." : e?.message || String(e));
+      setSearchMessage(e?.status === 502
+        ? `Qidiruv bajarilmadi. ASLda buyurtma bor-yo'qligi hali noma'lum; qayta buyurtma yubormang. Texnik javob: ${e?.message || "502"}`
+        : e?.message || String(e));
     } finally { setBusy(false); }
   };
   const refresh = () => run(async () => {
