@@ -84,14 +84,19 @@ export function KmOrders({ onExit }: { onExit: () => void }) {
       throw e;
     }
   });
-  const searchOrders = async () => {
+  const searchOrders = async (unfiltered = false) => {
     setSearchMessage(""); setFoundOrders(null); setBusy(true);
     try {
       if (!/^\d{9}$/.test(credentials.inn) || !credentials.api_key) throw Error("1-bo'limda firmadan INN va API kalitini tanlang");
-      if (!searchPo.trim()) throw Error("Ishlab chiqarish buyurtma raqamini kiriting");
-      const result = await api.kmOrderSearch({ ...credentials, po_number: searchPo.trim(), product_group: searchGroup });
-      setFoundOrders(result.orderInfos || []);
-      setSearchMessage(result.orderInfos?.length ? "Topilgan buyurtmani tanlang, keyin holatini yangilang." : "Buyurtma topilmadi. ASL javobi kechikishi mumkin; takroriy buyurtma yuborishdan oldin yana tekshiring.");
+      if (!unfiltered && !searchPo.trim()) throw Error("Ishlab chiqarish buyurtma raqamini kiriting yoki filtrsiz qidirishni tanlang");
+      const result = await api.kmOrderSearch({ ...credentials, po_number: unfiltered ? "" : searchPo.trim(), product_group: unfiltered ? "" : searchGroup });
+      if (!Array.isArray(result.orderInfos)) throw Error("ASL javobida buyurtmalar ro'yxati yo'q. Bu buyurtma topilmadi degani emas.");
+      setFoundOrders(result.orderInfos);
+      setSearchMessage(result.orderInfos.length
+        ? `${unfiltered ? "Filtrsiz qidiruv: " : ""}${result.orderInfos.length} ta buyurtma. Bir sahifada 100 tagacha ko'rsatiladi. Topilgan buyurtmani tanlang.`
+        : unfiltered
+          ? "ASL ushbu API kalit uchun filtrsiz qidiruvda ham bo'sh ro'yxat qaytardi. Oldingi buyurtmani tasdiqlash uchun ASL yordam xizmatiga firma INN va buyurtma raqamini bering."
+          : "Ushbu filtrlar bo'yicha buyurtma topilmadi. Quyidagi filtrsiz qidiruv orqali boshqa raqam bilan yaratilgan buyurtmalarni ham tekshiring.");
     } catch (e: any) {
       setSearchMessage(e?.status === 502
         ? `Qidiruv bajarilmadi. ASLda buyurtma bor-yo'qligi hali noma'lum; qayta buyurtma yubormang. Texnik javob: ${e?.message || "502"}`
@@ -149,7 +154,10 @@ export function KmOrders({ onExit }: { onExit: () => void }) {
       <p className="text-sm text-muted">Agar yuborishdan keyin 502 chiqqan bo'lsa, buyurtma takrorlanmasligi uchun avval shu yerda qidiring.</p>
       <div className="grid gap-4 md:grid-cols-2"><Field label="Qidiruv: ishlab chiqarish buyurtma raqami (poNumber)"><Input value={searchPo} onChange={e => setSearchPo(e.target.value)} placeholder="Masalan: 20866 svecha" /></Field>
         <Field label="Qidiruv: mahsulot guruhi"><select className="w-full h-11 rounded-lg border border-border bg-surface2 px-3" value={searchGroup} onChange={e => setSearchGroup(e.target.value)}><option value="">Barcha guruhlar</option>{GROUPS.map(x => <option key={x} value={x}>{GROUP_LABELS[x] || x}</option>)}</select></Field></div>
-      <button disabled={busy} onClick={searchOrders} className="rounded-lg border border-border px-4 py-2 disabled:opacity-50">Buyurtmalarni qidirish</button>
+      <div className="flex flex-wrap gap-3">
+        <button disabled={busy} onClick={() => searchOrders()} className="rounded-lg border border-border px-4 py-2 disabled:opacity-50">Buyurtmalarni qidirish</button>
+        <button disabled={busy} onClick={() => searchOrders(true)} className="rounded-lg border border-border px-4 py-2 disabled:opacity-50">Filtrsiz qidirish (100 tagacha)</button>
+      </div>
       {searchMessage && <p role="status" className="rounded-lg border border-border bg-surface2 p-3 text-sm">{searchMessage}</p>}
       {foundOrders && <div className="space-y-2">{foundOrders.length === 0 && <p className="text-sm text-muted">Hozircha buyurtma topilmadi.</p>}{foundOrders.map(o => <button key={o.orderId} onClick={() => { setOrderId(o.orderId); setStatus(null); }} className="block w-full rounded-lg border border-border p-3 text-left text-sm hover:border-accent"><strong>{o.orderStatus}</strong> · {o.poNumber || "raqamsiz"} · {o.createDate || ""}<br /><span className="font-mono text-xs">{o.orderId}</span></button>)}</div>}
       <Field label="ASL buyurtma ID (UUID)" hint="Faqat ASL qaytargan buyurtma ID; poNumber emas"><Input value={orderId} onChange={e => { setOrderId(e.target.value); setStatus(null); setPack(null); setLastPacks({}); }} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" /></Field>
