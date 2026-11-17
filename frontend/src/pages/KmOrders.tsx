@@ -22,6 +22,9 @@ export function KmOrders({ onExit }: { onExit: () => void }) {
   const [po, setPo] = useState("");
   const [products, setProducts] = useState<Product[]>([{ gtin: "", quantity: 1, cis_type: "UNIT" }]);
   const [orderId, setOrderId] = useState("");
+  const [searchPo, setSearchPo] = useState("");
+  const [searchGroup, setSearchGroup] = useState("");
+  const [searchMessage, setSearchMessage] = useState("");
   const [foundOrders, setFoundOrders] = useState<{ orderId: string; orderStatus: string; poNumber?: string; createDate?: string }[] | null>(null);
   const [uncertain, setUncertain] = useState(false);
   const [status, setStatus] = useState<{ orders: any; suborders: any } | null>(null);
@@ -75,13 +78,22 @@ export function KmOrders({ onExit }: { onExit: () => void }) {
       throw e;
     }
   });
-  const searchOrders = () => run(async () => {
-    if (!/^\d{9}$/.test(credentials.inn) || !credentials.api_key) throw Error("Firma INN va API kalitini kiriting");
-    const result = await api.kmOrderSearch({ ...credentials, po_number: po.trim(), product_group: group });
-    setFoundOrders(result.orderInfos || []);
-    setMessage(result.orderInfos?.length ? "Topilgan buyurtmalarni tekshiring. Kerakli buyurtma ID sini tanlang." : "Bu filtrlar bo'yicha buyurtma topilmadi. ASLda qayta tekshirib ko'ring; natija kechikishi mumkin.");
+  const searchOrders = async () => {
+    setSearchMessage(""); setFoundOrders(null); setBusy(true);
+    try {
+      if (!/^\d{9}$/.test(credentials.inn) || !credentials.api_key) throw Error("1-bo'limda firmadan INN va API kalitini tanlang");
+      if (!searchPo.trim() || !searchGroup) throw Error("Ishlab chiqarish buyurtma raqami va mahsulot guruhini kiriting");
+      const result = await api.kmOrderSearch({ ...credentials, po_number: searchPo.trim(), product_group: searchGroup });
+      setFoundOrders(result.orderInfos || []);
+      setSearchMessage(result.orderInfos?.length ? "Topilgan buyurtmani tanlang, keyin holatini yangilang." : "Buyurtma topilmadi. ASL javobi kechikishi mumkin; takroriy buyurtma yuborishdan oldin yana tekshiring.");
+    } catch (e: any) {
+      setSearchMessage(e?.status === 502 ? "Qidiruv ham 502 bilan tugadi. ASLda buyurtma bor-yo'qligi hali noma'lum; qayta buyurtma yubormang." : e?.message || String(e));
+    } finally { setBusy(false); }
+  };
+  const refresh = () => run(async () => {
+    if (!/^[0-9a-fA-F-]{36}$/.test(orderId.trim())) throw Error("ASL buyurtma ID UUID formatida bo'lishi kerak; ishlab chiqarish raqami bu maydonga kiritilmaydi");
+    setStatus(await api.kmOrderStatus({ ...credentials, order_id: orderId.trim() }));
   });
-  const refresh = () => run(async () => { setStatus(await api.kmOrderStatus({ ...credentials, order_id: orderId })); });
   const receive = (gtin: string, quantity: number) => run(async () => {
     if (pack?.codes?.length && !window.confirm("Joriy KM paketini CSV qilib saqladingizmi? Keyingi paket ekranda uning o'rnini egallaydi.")) return;
     const result = await api.kmOrderReceive({ ...credentials, order_id: orderId, gtin, quantity, last_pack_id: lastPacks[gtin] || "" });
@@ -126,10 +138,13 @@ export function KmOrders({ onExit }: { onExit: () => void }) {
     </section>
     <section className="rounded-xl border border-border bg-surface p-5 space-y-4">
       <h2 className="font-bold">3. Holat va kodlarni olish</h2>
-      <p className="text-sm text-muted">Agar yuborishdan keyin 502 chiqqan bo'lsa, buyurtma takrorlanmasligi uchun avval qidiring. Yuqoridagi ishlab chiqarish buyurtma raqami (poNumber) va mahsulot guruhi bo'yicha qidiriladi.</p>
+      <p className="text-sm text-muted">Agar yuborishdan keyin 502 chiqqan bo'lsa, buyurtma takrorlanmasligi uchun avval shu yerda qidiring.</p>
+      <div className="grid gap-4 md:grid-cols-2"><Field label="Qidiruv: ishlab chiqarish buyurtma raqami (poNumber)"><Input value={searchPo} onChange={e => setSearchPo(e.target.value)} placeholder="Masalan: 20866 svecha" /></Field>
+        <Field label="Qidiruv: mahsulot guruhi"><select className="w-full h-11 rounded-lg border border-border bg-surface2 px-3" value={searchGroup} onChange={e => setSearchGroup(e.target.value)}><option value="">Tanlang</option>{GROUPS.map(x => <option key={x}>{x}</option>)}</select></Field></div>
       <button disabled={busy} onClick={searchOrders} className="rounded-lg border border-border px-4 py-2 disabled:opacity-50">Buyurtmalarni qidirish</button>
+      {searchMessage && <p role="status" className="rounded-lg border border-border bg-surface2 p-3 text-sm">{searchMessage}</p>}
       {foundOrders && <div className="space-y-2">{foundOrders.length === 0 && <p className="text-sm text-muted">Hozircha buyurtma topilmadi.</p>}{foundOrders.map(o => <button key={o.orderId} onClick={() => { setOrderId(o.orderId); setStatus(null); }} className="block w-full rounded-lg border border-border p-3 text-left text-sm hover:border-accent"><strong>{o.orderStatus}</strong> · {o.poNumber || "raqamsiz"} · {o.createDate || ""}<br /><span className="font-mono text-xs">{o.orderId}</span></button>)}</div>}
-      <Field label="ASL buyurtma ID" hint="Avvalgi buyurtmani ham shu yerda tekshirishingiz mumkin"><Input value={orderId} onChange={e => { setOrderId(e.target.value); setStatus(null); setPack(null); setLastPacks({}); }} /></Field>
+      <Field label="ASL buyurtma ID (UUID)" hint="Faqat ASL qaytargan buyurtma ID; poNumber emas"><Input value={orderId} onChange={e => { setOrderId(e.target.value); setStatus(null); setPack(null); setLastPacks({}); }} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" /></Field>
       <Field label="Bir marta olinadigan KM soni" hint="Paketlar ketma-ket olinadi; har birini CSV qilib saqlang"><Input type="number" min={1} max={1000} value={receiveCount} onChange={e => setReceiveCount(Number(e.target.value))} /></Field>
       <button disabled={busy || !orderId || !verified} onClick={refresh} className="rounded-lg border border-border px-4 py-2 disabled:opacity-50">Holatni yangilash</button>
       {status && <div className="space-y-3"><pre className="overflow-auto rounded-lg bg-surface2 p-3 text-xs">{JSON.stringify(status.orders, null, 2)}</pre>
