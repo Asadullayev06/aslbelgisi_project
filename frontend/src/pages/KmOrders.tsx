@@ -3,6 +3,7 @@ import { ArrowLeft, Plus, Trash2 } from "lucide-react";
 import { CompanyPicker } from "@/components/CompanyPicker";
 import { Field, Input } from "@/components/ui/Input";
 import { api } from "@/api";
+import type { ModItem } from "@/types";
 
 type Product = { gtin: string; quantity: number; cis_type: string };
 const GROUPS = ["vegetableoil", "bio", "tobacco", "alcohol", "beer", "pharma", "water", "medicals", "appliances", "antiseptic", "fertilizers"];
@@ -16,6 +17,8 @@ export function KmOrders({ onExit }: { onExit: () => void }) {
   const [group, setGroup] = useState("water");
   const [purpose, setPurpose] = useState("PRIMARY");
   const [place, setPlace] = useState("");
+  const [mods, setMods] = useState<ModItem[]>([]);
+  const [modError, setModError] = useState("");
   const [po, setPo] = useState("");
   const [products, setProducts] = useState<Product[]>([{ gtin: "", quantity: 1, cis_type: "UNIT" }]);
   const [orderId, setOrderId] = useState("");
@@ -26,6 +29,9 @@ export function KmOrders({ onExit }: { onExit: () => void }) {
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const credentials = { inn: inn.trim(), api_key: key.trim() };
+  function changeCredentials(i: string, k: string) {
+    setInn(i); setKey(k); setVerified(false); setMods([]); setPlace(""); setModError("");
+  }
   const updateProduct = (index: number, patch: Partial<Product>) => setProducts(rows => rows.map((r, i) => i === index ? { ...r, ...patch } : r));
   async function run(action: () => Promise<void>) {
     setBusy(true); setMessage("");
@@ -35,6 +41,18 @@ export function KmOrders({ onExit }: { onExit: () => void }) {
   const check = () => run(async () => {
     if (!/^\d{9}$/.test(credentials.inn) || !credentials.api_key) throw Error("9 raqamli INN va API kalitni kiriting");
     await api.kmOrderVerify(credentials); setVerified(true); setMessage("Firma API kaliti tasdiqlandi");
+    try {
+      const result = await api.customModList(credentials.inn, credentials.api_key);
+      if (result.ok) { setMods(result.mods); if (result.mods.length === 1 && /^\d+$/.test(result.mods[0].id)) setPlace(result.mods[0].id); }
+      else setModError(result.error || "MOD ro'yxatini olish imkoni bo'lmadi");
+    } catch (e: any) { setModError(e?.message || String(e)); }
+  });
+  const loadMods = () => run(async () => {
+    if (!verified) throw Error("Avval firma kalitini tekshiring");
+    const result = await api.customModList(credentials.inn, credentials.api_key);
+    if (!result.ok) { setModError(result.error || "MOD ro'yxatini olish imkoni bo'lmadi"); return; }
+    setMods(result.mods); setModError("");
+    if (result.mods.length === 1 && /^\d+$/.test(result.mods[0].id)) setPlace(result.mods[0].id);
   });
   const create = () => run(async () => {
     if (!verified) throw Error("Avval firma kalitini tekshiring");
@@ -65,16 +83,21 @@ export function KmOrders({ onExit }: { onExit: () => void }) {
     <div><h1 className="text-2xl font-extrabold">KM kod sotib olish</h1><p className="text-sm text-muted mt-1">Firma API kaliti orqali ASL Belgisi da KM chiqarish buyurtmasi</p></div>
     <section className="rounded-xl border border-border bg-surface p-5 space-y-4">
       <h2 className="font-bold">1. Firma</h2>
-      <CompanyPicker currentInn={inn} currentKey={key} onPick={(i, k) => { setInn(i); setKey(k); setVerified(false); }} />
-      <div className="grid gap-4 md:grid-cols-2"><Field label="INN"><Input value={inn} onChange={e => { setInn(e.target.value); setVerified(false); }} inputMode="numeric" /></Field>
-      <Field label="ASL API kalit"><Input type="password" value={key} onChange={e => { setKey(e.target.value); setVerified(false); }} autoComplete="off" /></Field></div>
+      <CompanyPicker currentInn={inn} currentKey={key} onPick={(i, k) => changeCredentials(i, k)} />
+      <div className="grid gap-4 md:grid-cols-2"><Field label="INN"><Input value={inn} onChange={e => changeCredentials(e.target.value, key)} inputMode="numeric" /></Field>
+      <Field label="ASL API kalit"><Input type="password" value={key} onChange={e => changeCredentials(inn, e.target.value)} autoComplete="off" /></Field></div>
       <button disabled={busy} onClick={check} className="rounded-lg bg-accent px-4 py-2 text-white disabled:opacity-50">{verified ? "✓ Tasdiqlangan" : "Kalitni tekshirish"}</button>
     </section>
     <section className="rounded-xl border border-border bg-surface p-5 space-y-4">
       <h2 className="font-bold">2. Buyurtma</h2>
       <div className="grid gap-4 md:grid-cols-2"><Field label="Mahsulot guruhi"><select className="w-full h-11 rounded-lg border border-border bg-surface2 px-3" value={group} onChange={e => setGroup(e.target.value)}>{GROUPS.map(x => <option key={x}>{x}</option>)}</select></Field>
       <Field label="Markirovka maqsadi"><select className="w-full h-11 rounded-lg border border-border bg-surface2 px-3" value={purpose} onChange={e => setPurpose(e.target.value)}>{PURPOSES.map(x => <option key={x}>{x}</option>)}</select></Field>
-      <Field label="MOD / businessPlaceId" hint="ASL dagi faol ishlab chiqarish joyi ID raqami"><Input value={place} onChange={e => setPlace(e.target.value)} inputMode="numeric" /></Field>
+      <div className="space-y-2"><Field label="MOD / businessPlaceId" hint="Firma mustaqil buyurtma berganda uning biznes joyi ID raqami kerak"><Input value={place} onChange={e => setPlace(e.target.value)} inputMode="numeric" /></Field>
+        <button disabled={busy || !verified} onClick={loadMods} className="text-sm text-accent disabled:opacity-50">API kalit orqali MODlarni olish</button>
+        {mods.length > 0 && <select aria-label="MOD tanlash" className="w-full h-11 rounded-lg border border-border bg-surface2 px-3" value={mods.some(m => m.id === place) ? place : ""} onChange={e => setPlace(e.target.value)}><option value="">MODni tanlang</option>{mods.filter(m => /^\d+$/.test(m.id)).map(m => <option key={m.id} value={m.id}>{m.name || "MOD"} · ID {m.id}</option>)}</select>}
+        {modError && <p className="text-xs text-danger">MODlarni olish imkoni bo'lmadi: {modError}. Firma administratoridan biznes joyi ID sini so'rang.</p>}
+        {verified && !modError && mods.length === 0 && <p className="text-xs text-muted">MOD ro'yxati bo'sh. Firma administratoridan biznes joyi ID sini so'rang.</p>}
+      </div>
       <Field label="Ishlab chiqarish buyurtma raqami (ixtiyoriy)"><Input value={po} onChange={e => setPo(e.target.value)} /></Field></div>
       {products.map((p, i) => <div key={i} className="grid gap-3 md:grid-cols-[1fr_140px_160px_40px] items-end"><Field label={`GTIN ${i + 1}`}><Input value={p.gtin} onChange={e => updateProduct(i, { gtin: e.target.value })} inputMode="numeric" maxLength={14} /></Field>
         <Field label="KM soni"><Input type="number" min={1} max={150000} value={p.quantity} onChange={e => updateProduct(i, { quantity: Number(e.target.value) })} /></Field>
