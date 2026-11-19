@@ -80,6 +80,8 @@ async function req<T>(path: string, init: RequestInit = {},
 }
 
 export const api = {
+  kmUtilisationSubmit: (body: { inn: string; api_key: string; product_group: string; business_place_id: number; release_type: string; manufacturer_country: string; production_date?: string; expiration_date?: string; series_number: string; production_order_id: string; codes: string[] }) => req<{ reportId: string }>("/api/km-utilisation", { method: "POST", body: JSON.stringify(body) }),
+  kmUtilisationStatus: (body: { inn: string; api_key: string; report_id: string }) => req<unknown>("/api/km-utilisation/status", { method: "POST", body: JSON.stringify(body) }),
   kmOrderVerify: (body: { inn: string; api_key: string }) => req<{ ok: boolean }>("/api/km-orders/verify", { method: "POST", body: JSON.stringify(body) }),
   kmOrderCreate: (body: { inn: string; api_key: string; product_group: string; release_method_type: string; business_place_id?: number; po_number: string; products: { gtin: string; quantity: number; cis_type: string }[] }) => req<{ order_id: string }>("/api/km-orders", { method: "POST", body: JSON.stringify(body) }),
   kmOrderStatus: (body: { inn: string; api_key: string; order_id: string }) => req<{ orders: any; suborders: any }>("/api/km-orders/status", { method: "POST", body: JSON.stringify(body) }),

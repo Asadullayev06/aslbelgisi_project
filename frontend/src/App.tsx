@@ -1,3 +1,4 @@
+import { KmUtilisation } from "@/pages/KmUtilisation";
 import { useCallback, useEffect, useState } from "react";
 import { Boxes, Plus, LogOut, Shield, HardHat, ScanBarcode, Package, ArrowRight, ScanLine, Layers, Search, ClipboardList, ArrowLeft, Settings, Trash2, Pencil, Check, X, Sun, Moon, Barcode, Printer, ShoppingCart } from "lucide-react";
 import { Button } from "@/components/ui/Button";
@@ -41,6 +42,7 @@ type Route =
   | { kind: "repScan"; projectId: number }
   | { kind: "stock" }
   | { kind: "kmOrders" }
+  | { kind: "kmUtilisation" }
   | { kind: "inspector" }
   | { kind: "custom" }
   | { kind: "search" }
@@ -127,6 +129,7 @@ function destToRoute(dest: NavDest): Route {
     case "reporting":   return { kind: "repPicker" };
     case "boxcheck":    return { kind: "bcPicker" };
     case "stock":       return { kind: "stock" };
+    case "kmUtilisation": return { kind: "kmUtilisation" };
     case "kmOrders":    return { kind: "kmOrders" };
     case "inspector":   return { kind: "inspector" };
     case "custom":      return { kind: "custom" };
@@ -146,6 +149,7 @@ function activeKeyFor(route: Route): NavDest | null {
     case "repPicker": case "repSetup": case "repScan": return "reporting";
     case "bcPicker": case "bcSetup": case "bcScan":  return "boxcheck";
     case "stock":                                    return "stock";
+    case "kmUtilisation": return "kmUtilisation";
     case "kmOrders":                                 return "kmOrders";
     case "inspector":                                return "inspector";
     case "custom":                                   return "custom";
@@ -166,6 +170,7 @@ function titleFor(route: Route): string {
     case "repPicker": case "repSetup": case "repScan": return "Hisobot";
     case "bcPicker": case "bcSetup": case "bcScan":  return "Quti tekshiruvi";
     case "stock":                                    return "GTIN Ostatok";
+    case "kmUtilisation": return "KM qo\'llash";
     case "kmOrders":                                 return "KM kod sotib olish";
     case "inspector":                                return "Marka Kod Tekshiruvi";
     case "custom":                                   return "Custom Aggregation";
@@ -196,6 +201,7 @@ function ClassicShell({ route, setRoute }: {
   if (route.kind === "stock") {
     return <GtinStock onExit={() => setRoute({ kind: "home" })} />;
   }
+  if (route.kind === "kmUtilisation") return <KmUtilisation onExit={() => setRoute({ kind: "home" })} />;
   if (route.kind === "kmOrders") {
     return <KmOrders onExit={() => setRoute({ kind: "home" })} />;
   }
@@ -294,6 +300,7 @@ function ClassicShell({ route, setRoute }: {
   }
   return <Home onAggregation={() => setRoute({ kind: "modeChooser" })}
                onStock={() => setRoute({ kind: "stock" })}
+               onKmUtilisation={() => setRoute({ kind: "kmUtilisation" })}
                onKmOrders={() => setRoute({ kind: "kmOrders" })}
                onInspector={() => setRoute({ kind: "inspector" })}
                onCustom={() => setRoute({ kind: "custom" })}
@@ -932,6 +939,7 @@ function Dashboard({ onNavigate }: { onNavigate: (dest: NavDest) => void }) {
 
       <div className="text-[13px] font-bold text-text/70 mb-3">Vositalar</div>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <ToolCard icon={<ScanLine className="size-8 text-accent" />} title="KM qo'llash" subtitle="ASLga KM qo'llash hisoboti" onClick={() => onNavigate("kmUtilisation")} />
         <ToolCard icon={<ShoppingCart className="size-8 text-accent" />} title="KM kod sotib olish"
                   subtitle="ASL Belgisi orqali KM chiqarish buyurtmasi"
                   onClick={() => onNavigate("kmOrders")} />
@@ -964,10 +972,11 @@ function Dashboard({ onNavigate }: { onNavigate: (dest: NavDest) => void }) {
 }
 
 
-function Home({ onAggregation, onStock, onKmOrders, onInspector, onCustom, onSearch, onSscc, onBartender, onAdmin }: {
+function Home({ onAggregation, onStock, onKmOrders, onKmUtilisation, onInspector, onCustom, onSearch, onSscc, onBartender, onAdmin }: {
   onAggregation: () => void;
   onStock: () => void;
   onKmOrders: () => void;
+  onKmUtilisation: () => void;
   onInspector: () => void;
   onCustom: () => void;
   onSearch: () => void;
@@ -1002,6 +1011,7 @@ function Home({ onAggregation, onStock, onKmOrders, onInspector, onCustom, onSea
           subtitle="GTIN bo'yicha real vaqtdagi kompaniya qoldiqlarini ko'rish"
           onClick={onStock}
         />
+        <ToolCard icon={<ScanLine className="size-8 text-accent" />} title="KM qo'llash" subtitle="ASLga KM qo'llash hisoboti" onClick={onKmUtilisation} />
         <ToolCard icon={<ShoppingCart className="size-8 text-accent" />} title="KM kod sotib olish"
                   subtitle="ASL Belgisi orqali KM chiqarish buyurtmasi" onClick={onKmOrders} />
         <ToolCard

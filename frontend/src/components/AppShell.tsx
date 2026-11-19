@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 
 export type NavDest =
   | "home" | "aggregation" | "inventory" | "reporting" | "boxcheck"
-  | "stock" | "inspector" | "custom" | "search" | "sscc" | "bartender" | "kmOrders" | "admin";
+  | "stock" | "inspector" | "custom" | "search" | "sscc" | "bartender" | "kmOrders" | "kmUtilisation" | "admin";
 
 interface Props {
   activeKey: NavDest | null;
@@ -28,6 +28,7 @@ const MAIN: NavItem[] = [
   { key: "boxcheck",    label: "Quti tekshiruvi",  icon: <Boxes className="size-[18px]" /> },
 ];
 const TOOLS: NavItem[] = [
+  { key: "kmUtilisation", label: "KM qo\'llash", icon: <ScanLine className="size-[18px]" /> },
   { key: "kmOrders", label: "KM kod sotib olish", icon: <ShoppingCart className="size-[18px]" /> },
   { key: "stock",     label: "GTIN Ostatok",        icon: <Barcode className="size-[18px]" /> },
   { key: "inspector", label: "Marka Kod Tekshiruvi", icon: <ScanLine className="size-[18px]" /> },
