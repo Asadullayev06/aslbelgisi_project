@@ -42,6 +42,7 @@ export function KmOrders({ onExit }: { onExit: () => void }) {
   function changeCredentials(i: string, k: string) {
     setInn(i); setKey(k); setVerified(false); setMods([]); setPlace(""); setModError("");
     setMessage(""); setSearchMessage(""); setFoundOrders(null); setStatus(null);
+    setPack(null); setLastPacks({}); setOrderId("");
   }
   const updateProduct = (index: number, patch: Partial<Product>) => setProducts(rows => rows.map((r, i) => i === index ? { ...r, ...patch } : r));
   async function run(action: () => Promise<void>) {
@@ -108,10 +109,14 @@ export function KmOrders({ onExit }: { onExit: () => void }) {
     if (!/^[0-9a-fA-F-]{36}$/.test(orderId.trim())) throw Error("ASL buyurtma ID UUID formatida bo'lishi kerak; ishlab chiqarish raqami bu maydonga kiritilmaydi");
     setStatus(await api.kmOrderStatus({ ...credentials, order_id: orderId.trim() }));
   });
-  const receive = (gtin: string, quantity: number) => run(async () => {
+  const receive = (gtin: string, quantity: number, serverLastPackId?: string) => run(async () => {
+    const lastPackId = lastPacks[gtin] || serverLastPackId || "";
+    if (!lastPacks[gtin] && serverLastPackId && !window.confirm("ASLda avval olingan KM paketlari bor. Ularni CSV qilib saqlaganmisiz? Davom etsangiz, oxirgi paketdan KEYINGI kodlar olinadi.")) return;
     if (pack?.codes?.length && !window.confirm("Joriy KM paketini CSV qilib saqladingizmi? Keyingi paket ekranda uning o'rnini egallaydi.")) return;
-    const result = await api.kmOrderReceive({ ...credentials, order_id: orderId, gtin, quantity, last_pack_id: lastPacks[gtin] || "" });
+    const result = await api.kmOrderReceive({ ...credentials, order_id: orderId, gtin, quantity, last_pack_id: lastPackId });
     setPack(result); setLastPacks(p => ({ ...p, [gtin]: result.packId || "" })); setMessage(`${result.codes?.length || 0} ta kod olindi. CSV faylni saqlang.`);
+    // Require fresh ASL counts before another retrieval; retain the downloaded CSV.
+    setStatus(null);
   });
   function download() {
     if (!pack?.codes?.length) return;
@@ -160,13 +165,13 @@ export function KmOrders({ onExit }: { onExit: () => void }) {
         <button disabled={busy} onClick={() => searchOrders(true)} className="rounded-lg border border-border px-4 py-2 disabled:opacity-50">Filtrsiz qidirish (100 tagacha)</button>
       </div>
       {searchMessage && <p role="status" className="rounded-lg border border-border bg-surface2 p-3 text-sm">{searchMessage}</p>}
-      {foundOrders && <div className="space-y-2">{foundOrders.length === 0 && <p className="text-sm text-muted">Hozircha buyurtma topilmadi.</p>}{foundOrders.map(o => <button key={o.orderId} onClick={() => { setOrderId(o.orderId); setStatus(null); }} className="block w-full rounded-lg border border-border p-3 text-left text-sm hover:border-accent"><strong>{o.orderStatus}</strong> · {o.poNumber || "raqamsiz"} · {o.createDate || ""}<br /><span className="font-mono text-xs">{o.orderId}</span></button>)}</div>}
+      {foundOrders && <div className="space-y-2">{foundOrders.length === 0 && <p className="text-sm text-muted">Hozircha buyurtma topilmadi.</p>}{foundOrders.map(o => <button key={o.orderId} onClick={() => { setOrderId(o.orderId); setStatus(null); setPack(null); setLastPacks({}); }} className="block w-full rounded-lg border border-border p-3 text-left text-sm hover:border-accent"><strong>{o.orderStatus}</strong> · {o.poNumber || "raqamsiz"} · {o.createDate || ""}<br /><span className="font-mono text-xs">{o.orderId}</span></button>)}</div>}
       <Field label="ASL buyurtma ID (UUID)" hint="Faqat ASL qaytargan buyurtma ID; poNumber emas"><Input value={orderId} onChange={e => { setOrderId(e.target.value); setStatus(null); setPack(null); setLastPacks({}); }} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" /></Field>
       <Field label="Bir marta olinadigan KM soni" hint="Maksimum 150 000 ta. Buyurtmada bundan kam kod bo'lsa, mavjud miqdor olinadi. Olingan kodlarni CSV qilib saqlang."><Input type="number" min={1} max={MAX_DOWNLOAD_CODES} value={receiveCount} onChange={e => setReceiveCount(Number(e.target.value))} /></Field>
       <button disabled={busy || !orderId || !verified} onClick={refresh} className="rounded-lg border border-border px-4 py-2 disabled:opacity-50">Holatni yangilash</button>
       {status && <div className="space-y-3"><pre className="overflow-auto rounded-lg bg-surface2 p-3 text-xs">{JSON.stringify(status.orders, null, 2)}</pre>
         {suborders.map((s, i) => <div key={i} className="flex flex-wrap items-center gap-3 rounded-lg border border-border p-3 text-sm"><strong>{s.gtin}</strong><span>{s.bufferStatus}</span><span>Mavjud: {s.leftInBuffer ?? s.availableCodes ?? "—"}</span>
-          <button disabled={busy || !Number.isInteger(receiveCount) || receiveCount < 1 || receiveCount > MAX_DOWNLOAD_CODES || (!s.leftInBuffer && !s.availableCodes)} onClick={() => receive(s.gtin, Math.min(Number(s.leftInBuffer) || Number(s.availableCodes), receiveCount))} className="rounded-lg bg-accent px-3 py-1.5 text-white disabled:opacity-40">Kodlarni olish</button></div>)}</div>}
+          <button disabled={busy || !Number.isInteger(receiveCount) || receiveCount < 1 || receiveCount > MAX_DOWNLOAD_CODES || (Number(s.leftInBuffer ?? s.availableCodes ?? 0) <= 0)} onClick={() => receive(s.gtin, Math.min(Number(s.leftInBuffer ?? s.availableCodes ?? 0), receiveCount), s.lastPackId)} className="rounded-lg bg-accent px-3 py-1.5 text-white disabled:opacity-40">Kodlarni olish</button></div>)}</div>}
       {pack && <div className="space-y-2"><p>{pack.codes?.length || 0} ta KM · paket ID: {pack.packId}</p><button onClick={download} className="rounded-lg border border-border px-4 py-2">CSV yuklab olish</button></div>}
     </section>
   </div>;
